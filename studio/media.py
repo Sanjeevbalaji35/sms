@@ -20,9 +20,7 @@ NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 # minutes, with a clear message, instead of each one waiting to fail. Then the next link simply tries again.
 YT_PAUSE = int(config.env("SMS_YT_PAUSE", "30"))
 _yt_refused_until = 0.0
-YT_BLOCKED = ("YouTube isn't letting SMS download videos right now. Upload the video file instead, or use a "
-              "Twitch or Kick link. YouTube links will be tried again in a few minutes."
-              + ("" if config.ACCOUNTS else " To fix it for good: Settings, YouTube login."))
+YT_BLOCKED = "YouTube isn't letting SMS download videos right now."      # the start; blocked_message() says why and what to do
 _BOT_CHECK = re.compile(r"not a bot|confirm you.?re not|sign in to confirm(?! your age)", re.I)
 
 
@@ -168,6 +166,28 @@ def new_ydl(opts: dict):
     return y
 
 
+def blocked_message(what="download videos") -> str:
+    """Why YouTube is refusing, as far as SMS can tell, and the one thing to do about it."""
+    head = f"YouTube isn't letting SMS {what} right now"
+    missing = guard_problems()
+    b = login_browser()
+    if missing:
+        why = (f", because SMS's YouTube guard isn't installed ({', '.join(missing)}). Close SMS and start it with "
+               "Start SMS (or run pip install -r requirements.txt), then try again.")
+    elif not b and not config.ACCOUNTS:
+        why = (". Fix: open Settings, YouTube login, and choose the browser you watch YouTube in. "
+               "SMS then downloads the way you'd watch.")
+    elif b and login_jar() is None:
+        why = (f". SMS couldn't read your YouTube login from {BROWSERS[b]}. Open Settings, YouTube login, and choose "
+               f"{BROWSERS[b]} again (click Always Allow if your Mac asks for the keychain password).")
+    elif b:
+        why = (f", even with your YouTube login from {BROWSERS[b]}. Open youtube.com in {BROWSERS[b]} to check you're "
+               "still signed in, then try again in a few minutes.")
+    else:
+        why = ". YouTube links will be tried again in a few minutes."
+    return head + why + " Meanwhile, upload the video file or use a Twitch or Kick link."
+
+
 def login_status(check=False) -> dict:
     b = login_browser()
     cf = cookie_file()
@@ -219,8 +239,9 @@ def youtube_paused() -> bool:
 
 
 def check_youtube(url: str):
-    """Check if YouTube is refusing this server right now (non-blocking so users can still attempt jobs)."""
-    pass
+    """Raise YouTubeBlocked straight away if YouTube is refusing this server right now."""
+    if is_youtube(url) and youtube_paused():
+        raise YouTubeBlocked(blocked_message())
 
 
 def note_refusal(url: str, err) -> bool:
@@ -242,7 +263,7 @@ def _youtube_guard(url):
         raise
     except Exception as e:  # noqa: BLE001
         if note_refusal(url, e):
-            raise YouTubeBlocked(YT_BLOCKED) from None
+            raise YouTubeBlocked(blocked_message()) from None
         raise
 
 
