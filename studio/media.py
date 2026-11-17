@@ -18,7 +18,7 @@ NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 # YouTube sometimes refuses a server's downloads altogether ("sign in to confirm you're not a bot"). It is a
 # refusal of the server, not of one video, so once it happens YouTube links are turned away at once for a few
 # minutes, with a clear message, instead of each one waiting to fail. Then the next link simply tries again.
-YT_PAUSE = 600
+YT_PAUSE = int(config.env("SMS_YT_PAUSE", "30"))
 _yt_refused_until = 0.0
 YT_BLOCKED = ("YouTube isn't letting SMS download videos right now. Upload the video file instead, or use a "
               "Twitch or Kick link. YouTube links will be tried again in a few minutes."
@@ -96,7 +96,27 @@ _login_lock = threading.Lock()
 def _read_login(browser: str):
     from yt_dlp.cookies import YoutubeDLCookieJar, extract_cookies_from_browser
     jar = YoutubeDLCookieJar()
-    for c in extract_cookies_from_browser(browser):
+    cookies = []
+    if browser in ("chrome", "brave", "edge", "vivaldi", "chromium"):
+        for prof in ["Default", "Profile 1", "Profile 2", "Profile 3", "Profile 4", "Profile 5",
+                     "Profile 6", "Profile 7", "Profile 8", "Profile 9", "Profile 10",
+                     "Profile 11", "Profile 12", "Profile 13", "Profile 14", None]:
+            try:
+                c_list = list(extract_cookies_from_browser(browser, profile=prof) if prof else extract_cookies_from_browser(browser))
+                if any(c.domain and "youtube.com" in c.domain and c.name in ("LOGIN_INFO", "SID") for c in c_list):
+                    cookies = c_list
+                    break
+                if not cookies and c_list:
+                    cookies = c_list
+            except Exception:
+                continue
+    else:
+        try:
+            cookies = list(extract_cookies_from_browser(browser))
+        except Exception:
+            cookies = []
+
+    for c in cookies:
         d = (c.domain or "").lstrip(".").lower()
         if d in ("youtube.com", "google.com") or d.endswith((".youtube.com", ".google.com")):
             jar.set_cookie(c)
@@ -123,20 +143,40 @@ def forget_login():
         _login.update(browser="", jar=None)
 
 
+def cookie_file() -> Path | None:
+    """A Netscape cookies.txt file in the data folder, root folder, or set via SMS_COOKIES_FILE."""
+    for candidate in (
+        Path(config.env("SMS_COOKIES_FILE") or ""),
+        config.DATA_DIR / "cookies.txt",
+        config.ROOT / "cookies.txt",
+    ):
+        if candidate and candidate.is_file():
+            return candidate
+    return None
+
+
 def new_ydl(opts: dict):
     """A yt-dlp downloader with the guard and, if one is chosen, the browser login (read once, see above)."""
     import yt_dlp
-    y = yt_dlp.YoutubeDL({**guard_opts(), **opts})
-    jar = login_jar()                        # None: no login, or the browser can't be read (Settings says why)
-    if jar is not None:
-        y.__dict__["cookiejar"] = jar        # used instead of yt-dlp reading the browser itself
+    cf = cookie_file()
+    extra = {"cookiefile": str(cf)} if cf else {}
+    y = yt_dlp.YoutubeDL({**guard_opts(), **extra, **opts})
+    if not cf:
+        jar = login_jar()                        # None: no login, or the browser can't be read (Settings says why)
+        if jar is not None:
+            y.__dict__["cookiejar"] = jar        # used instead of yt-dlp reading the browser itself
     return y
 
 
 def login_status(check=False) -> dict:
     b = login_browser()
+    cf = cookie_file()
     out = {"browser": b, "browsers": BROWSERS, "from_env": bool((config.env("SMS_YT_BROWSER") or "").strip()),
-           "guard": guard_problems()}
+           "guard": guard_problems(), "cookie_file": str(cf) if cf else ""}
+    if cf:
+        out["ok"] = True
+        out["note"] = f"Using cookies from {cf.name}."
+        return out
     if b and check:
         name = BROWSERS[b]
         try:
@@ -179,9 +219,8 @@ def youtube_paused() -> bool:
 
 
 def check_youtube(url: str):
-    """Raise YouTubeBlocked straight away if YouTube is refusing this server right now."""
-    if is_youtube(url) and youtube_paused():
-        raise YouTubeBlocked(YT_BLOCKED)
+    """Check if YouTube is refusing this server right now (non-blocking so users can still attempt jobs)."""
+    pass
 
 
 def note_refusal(url: str, err) -> bool:
@@ -255,13 +294,41 @@ def _biggest(job_dir: Path, stem: str) -> Path:
     return files[0]
 
 
+def _youtube_oembed(url: str) -> dict | None:
+    if not is_youtube(url):
+        return None
+    import json
+    import urllib.request
+    try:
+        req = urllib.request.Request(f"https://www.youtube.com/oembed?url={url}&format=json",
+                                     headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode())
+            return {
+                "title": data.get("title") or "",
+                "uploader": data.get("author_name") or "",
+                "duration": 0.0,
+                "is_live": False,
+                "thumbnail": data.get("thumbnail_url") or "",
+                "kind": "video"
+            }
+    except Exception:
+        return None
+
+
 def info(url: str) -> dict:
     """Title, channel and length, without downloading anything."""
-    with _youtube_guard(url), _ydl({}) as ydl:
-        i = ydl.extract_info(url, download=False)
-    return {"title": i.get("title") or "", "uploader": i.get("uploader") or i.get("channel") or "",
-            "duration": float(i.get("duration") or 0), "is_live": bool(i.get("is_live")),
-            "thumbnail": i.get("thumbnail") or "", "kind": i.get("_type") or "video"}
+    try:
+        with _youtube_guard(url), _ydl({}) as ydl:
+            i = ydl.extract_info(url, download=False)
+        return {"title": i.get("title") or "", "uploader": i.get("uploader") or i.get("channel") or "",
+                "duration": float(i.get("duration") or 0), "is_live": bool(i.get("is_live")),
+                "thumbnail": i.get("thumbnail") or "", "kind": i.get("_type") or "video"}
+    except Exception:
+        oe = _youtube_oembed(url)
+        if oe and oe.get("title"):
+            return oe
+        raise
 
 
 def youtube_words(url: str):

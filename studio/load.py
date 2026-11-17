@@ -30,6 +30,21 @@ def _cpu_times():
         n = lambda f: (f.dwHighDateTime << 32) | f.dwLowDateTime          # noqa: E731
         total = n(kernel) + n(user)                                        # kernel time includes idle time
         return total - n(idle), total
+    import sys
+    if sys.platform == "darwin":
+        import ctypes
+        import ctypes.util
+        libc = ctypes.CDLL(ctypes.util.find_library("c"))
+
+        class HostCpuLoadInfo(ctypes.Structure):
+            _fields_ = [("cpu_ticks", ctypes.c_uint * 4)]
+
+        info = HostCpuLoadInfo()
+        count = ctypes.c_uint(4)
+        if libc.host_statistics(libc.mach_host_self(), 3, ctypes.byref(info), ctypes.byref(count)) == 0:
+            user, system, idle, nice = info.cpu_ticks[0], info.cpu_ticks[1], info.cpu_ticks[2], info.cpu_ticks[3]
+            total = user + system + idle + nice
+            return user + system + nice, total
     with open("/proc/stat", encoding="ascii") as f:
         v = [int(x) for x in f.readline().split()[1:9]]
     return sum(v) - v[3] - v[4], sum(v)                                    # everything except idle and waiting on disk
