@@ -307,8 +307,8 @@ def main(argv: list[str] | None = None) -> int:
             n = chat.take()
             usual = finder.usual()
             if finder.add(n):
-                if slice_start < last_end:
-                    say(f"Spike: {n} messages (usual {usual:g}) - already inside the last clip.")
+                if slice_start - BEFORE < last_end:
+                    say(f"Spike: {n} messages (usual {usual:g}) - would overlap the last clip, skipped.")
                 else:
                     name = f"{channel}-{datetime.fromtimestamp(slice_start):%Y%m%d-%H%M%S}-{n}msgs.mp4"
                     pending.append((slice_start + AFTER + SETTLE, slice_start, clips / name))

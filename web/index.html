@@ -1708,6 +1708,18 @@ function everyPick(cid, v) {
     <button type="button" class="evbtn pick-btn" aria-haspopup="listbox" aria-expanded="false" aria-label="How often the AI checks"><span class="pv">${cur[1]}</span>${ic("caret").replace("<svg", '<svg class="car"')}</button>
     <div class="pick-menu" role="listbox">${EVERY.map(([k, l, h]) => `<button type="button" class="pick-opt" role="option" data-v="${k}" aria-selected="${k === cur[0]}"><span class="pl">${l}</span>${h ? `<small class="ph">${h}</small>` : ""}${ic("check").replace("<svg", '<svg class="tick"')}</button>`).join("")}</div></div>`;
 }
+function chatStats(R) {
+  const usual = !R.twitch ? "–" : R.warming ? "…" : (+R.usual).toFixed(R.usual % 1 ? 1 : 0);
+  return `<div class="stat"><b>${usual}</b><span>${!R.twitch ? "Chat spikes need Twitch" : R.warming ? "Learning how busy chat is" : "Usual messages per 10 s"}</span></div>
+    <div class="stat"><b>${R.spikes || 0}</b><span>Chat spikes · no AI</span></div>`;
+}
+function chatMeter(R) {
+  const rule = `A spike is ${R.min}+ messages in 10 s and ${R.ratio}× the usual.`;
+  const now = !R.twitch ? "This stream isn't on Twitch, so there's no chat to read. Only hand clips and trigger phrases will be made."
+    : !R.connected ? "Connecting to chat…" : R.warming ? "Watching chat for a minute to learn what's usual."
+    : `Last 10 s: <b>${R.last ?? 0}</b> messages.`;
+  return `<div class="meter"><h4>Chat spikes</h4><div class="said" style="justify-content:flex-start;color:var(--text)"><div>${now}</div><div class="sub">${rule}</div></div></div>`;
+}
 function liveHtml(j) {
   const L = j.live || {elapsed:0, lines:[], level:[], chat:null, checks:0, buffer_sec:0, pending_clips:0};
   return `<div class="livecard">
@@ -1717,13 +1729,13 @@ function liveHtml(j) {
         <button class="btn" data-act="clipnow" data-j="${j.id}" data-s="60">Last 60s</button>
         <button class="btn danger" data-act="stoplive" data-j="${j.id}">${ic("stop")}Stop</button></div></div>
     <div class="stats"><div class="stat"><b>${fmt(L.elapsed)}</b><span>Recorded</span></div><div class="stat"><b>${Math.round(L.buffer_sec / 60)} min</b><span>Kept in buffer</span></div>
-      <div class="stat">${everyPick(j.creator, L.every_min ?? 3)}<span>${L.every_min === 0 ? (L.auto?.warming ? "AI checks: learning the stream" : L.auto?.waiting ? "AI checks: jump spotted, checking soon" : `AI checks on jumps · ${L.auto?.spikes || 0} so far`) : "AI checks every"}</span></div>
-      <div class="stat"><b>${L.checks}</b><span>AI calls${L.skipped ? ` · ${L.skipped} skipped` : ""}${L.rejected ? ` · ${L.rejected} turned down` : ""}</span></div><div class="stat"><b>${j.clips.length}</b><span>Clips so far</span></div>
-      ${L.pending_clips ? `<div class="stat"><b>${L.pending_clips}</b><span>Hand clip being prepared</span></div>` : ""}</div>
+      ${L.mode === "chat" ? chatStats(L.chat_rule || {}) : `<div class="stat">${everyPick(j.creator, L.every_min ?? 3)}<span>${L.every_min === 0 ? (L.auto?.warming ? "AI checks: learning the stream" : L.auto?.waiting ? "AI checks: jump spotted, checking soon" : `AI checks on jumps · ${L.auto?.spikes || 0} so far`) : "AI checks every"}</span></div>
+      <div class="stat"><b>${L.checks}</b><span>AI calls${L.skipped ? ` · ${L.skipped} skipped` : ""}${L.rejected ? ` · ${L.rejected} turned down` : ""}</span></div>`}<div class="stat"><b>${j.clips.length}</b><span>Clips so far</span></div>
+      ${L.pending_clips ? `<div class="stat"><b>${L.pending_clips}</b><span>${L.mode === "chat" ? "Clip being prepared" : "Hand clip being prepared"}</span></div>` : ""}</div>
     <div class="meters">
       <div class="meter"><h4>Loudness, last minute</h4>${spark(L.level, "", -55, -8)}</div>
       ${L.chat ? `<div class="meter"><h4>Chat messages per second</h4>${spark(L.chat, "chat", 0, Math.max(4, ...L.chat))}</div>` : ""}
-      <div class="meter"><h4>Latest AI decisions</h4><div class="said" style="justify-content:flex-start;color:var(--text)">${(L.verdicts || []).length ? L.verdicts.slice(0, 4).map(v => `<div>${fmt(v.t)} · ${v.transcript != null ? "words " + v.transcript : ""}${v.reaction != null ? " · reaction " + v.reaction : ""} · <span class="sub">${esc(v.result)}</span></div>`).join("") : "<div class='sub'>First check soon…</div>"}</div></div>
+      ${L.mode === "chat" ? chatMeter(L.chat_rule || {}) : `<div class="meter"><h4>Latest AI decisions</h4><div class="said" style="justify-content:flex-start;color:var(--text)">${(L.verdicts || []).length ? L.verdicts.slice(0, 4).map(v => `<div>${fmt(v.t)} · ${v.transcript != null ? "words " + v.transcript : ""}${v.reaction != null ? " · reaction " + v.reaction : ""} · <span class="sub">${esc(v.result)}</span></div>`).join("") : "<div class='sub'>First check soon…</div>"}</div></div>`}
       <div class="meter"><h4>What was just said</h4><div class="said">${L.lines.length ? L.lines.map(t => `<div>${esc(t)}</div>`).join("") : "<div>Listening…</div>"}</div></div>
     </div>${j.error ? `<div class="err">${esc(j.error)}</div>` : ""}</div>
     ${j.clips.length ? `<div class="grid" style="margin-bottom:28px">${[...j.clips].reverse().map(c => clipHtml(j, c)).join("")}</div>` : ""}`;
@@ -1845,7 +1857,11 @@ function drawCreatorForm() {
   box.innerHTML = `<div class="card"><h2>Their stream</h2><p class="help">Where to record from, and whether to start by itself.</p>
       <div class="chans">${channelRows(c)}</div>
       <div class="fields" style="margin-top:14px"><label class="sw span"><input type="checkbox" data-k="auto_watch" ${c.auto_watch ? "checked" : ""}><span>Record automatically when they go live<small>Checks straight away, then every two minutes.</small></span></label></div></div>
-    <div class="card"><h2>How the AI decides</h2><p class="help">Two separate AI checks. The words judge reads only what was said. The reaction judge sees only how loud the streamer got and how busy chat was, never the words.</p>
+    <div class="card"><h2>Clip on chat spikes</h2><p class="help">No AI: a clip is made whenever Twitch chat suddenly gets busy. Chat is counted in 10-second slices. A slice is a spike when it has at least the number of messages below, and that many times the usual amount (the middle value of the last 3 minutes). Each clip is the 20 seconds before the spike and the 10 seconds after.</p>
+      <div class="fields"><label class="sw span"><input type="checkbox" data-k="chat_clips" ${c.chat_clips ? "checked" : ""}><span>Clip when chat spikes, instead of asking the AI<small>${c.channels?.twitch ? "Hand clips and your trigger phrases still work. Applies straight away, also to a recording that's running." : "Twitch only: add their Twitch channel above. Chat is read from Twitch."}</small></span></label>
+        <label class="f">Fewest messages in 10 seconds<input data-k="chat_min" type="number" min="1" max="1000" value="${c.chat_min ?? 10}"><small class="sub" style="font-weight:400">Raise it for big channels, so a few extra messages don't count.</small></label>
+        <label class="f">Times busier than usual<input data-k="chat_ratio" type="number" min="1.2" max="10" step="0.1" value="${c.chat_ratio ?? 2.5}"></label></div></div>
+    <div class="card"${c.chat_clips ? ' style="opacity:.55"' : ""}><h2>How the AI decides</h2><p class="help">${c.chat_clips ? "<b>Off while chat spikes are on.</b> " : ""}Two separate AI checks. The words judge reads only what was said. The reaction judge sees only how loud the streamer got and how busy chat was, never the words.</p>
       <div class="fields">
         <label class="f">Check the live stream every<select data-k="ai_every_min">${opts({1:"1 minute", 2:"2 minutes", 3:"3 minutes", 5:"5 minutes", 10:"10 minutes"}, c.ai_every_min || 3)}</select><small class="sub" id="costhint" style="font-weight:400">${costHint(c.ai_every_min)}</small></label>
         <p class="help span" style="margin:0">On top of that, the AI always looks straight away when the stream suddenly gets louder or chat gets busier, and when someone says "clip" or "clip it".</p>
@@ -2252,7 +2268,7 @@ document.addEventListener("change", async e => {
   if (t.closest("#cform") && t.type === "radio") { $$("#cform .plan").forEach(l => l.classList.toggle("on", l.contains(t))); return saveCreator(true); }
   if (!t.closest("#cform") || t.type !== "checkbox") return;
   if (t.dataset.k === "autopost" && t.checked && !await ask("Turn on auto-posting?", "Clips that score high enough will be posted to the ticked accounts without you seeing them first.", "Turn on")) { t.checked = false; return; }
-  saveCreator(true);
+  if (await saveCreator(true) && t.dataset.k === "chat_clips") drawCreatorForm();   // the AI card dims or comes back
 });
 
 document.addEventListener("click", async e => {

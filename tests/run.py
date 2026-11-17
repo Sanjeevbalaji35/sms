@@ -62,6 +62,7 @@ def main() -> int:
                 ("the storage folder: full drive, open, move", ["tests/test_storage.py"]),
                 ("security: visitor address, email addresses, Google sign-in, prompts", ["tests/test_hardening.py"]),
                 ("long logs, the machine monitor, failed recordings, admin day totals", ["tests/test_robustness.py"]),
+                ("chat spikes mode in live recording", ["tests/test_chatclips.py"]),
                 ("the clip watcher: chat spikes, 9:16 cuts, subtitles", ["tests/test_clipwatch.py"])]
         for name, args in runs:
             print(f"\n=== {name} ===", flush=True)

@@ -12,6 +12,7 @@ from pathlib import Path
 import numpy as np
 
 from . import alerts, auth, brain, config, creators, ctx, jobs, load, media, transcribe, usage
+from .chatspikes import SpikeFinder
 
 SESSIONS: dict = {}
 SEG_SEC = 6           # length of each buffer piece
@@ -135,6 +136,11 @@ class Session:
         self.last_spike = -999.0      # when the last jump was sent to the AI (stream seconds)
         self.base = {}                # running averages the jumps are measured against, shown on the card
         self.spikes = 0
+        self.chat_finder = None       # chat spikes mode: the rule, fed one 10-second slice at a time
+        self.chat_slice = 0           # the next slice to look at
+        self.chat_clip_end = -999.0   # where the last chat-spike clip ends, so spikes inside it don't make another
+        self.chat_last = None         # messages in the last finished slice, for the card
+        self.chat_hits = 0
 
     # ---------------------------------------------------------------- recording
     def start(self):
@@ -279,6 +285,44 @@ class Session:
         a, b = int(s), int(e) + 6
         rate = sum(self.chat.get(t, 0) for t in range(a, b + 1)) / (b - a + 1)
         return rate > max(3 * avg, 1.0)
+
+    # ---------------------------------------------------------------- chat spikes mode (no AI)
+    CHAT_SLICE, CHAT_BEFORE, CHAT_AFTER = 10, 20, 10
+
+    def _chat_mode(self) -> bool:
+        return bool(self.settings.get("chat_clips"))
+
+    def _chat_rule(self):
+        """Chat spikes mode: count chat in 10-second slices. A slice with at least `chat_ratio` times the usual
+        number of messages (the middle value of the last 3 minutes) and at least `chat_min` messages is a spike,
+        and gets a clip of 20 seconds before it and 10 after. No AI is asked whether it's worth it."""
+        if not self._chat_mode():
+            self.chat_finder = None
+            return
+        now = self.samples / SR
+        if self.chat_finder is None:              # just turned on: start from the slice we are in
+            self.chat_finder = SpikeFinder()
+            self.chat_slice = int(now // self.CHAT_SLICE)
+        f = self.chat_finder
+        f.ratio = float(self.settings.get("chat_ratio") or 2.5)
+        f.minimum = int(self.settings.get("chat_min") or 10)
+        while (self.chat_slice + 1) * self.CHAT_SLICE + 1 <= now:      # one second of grace for late messages
+            t = self.chat_slice * self.CHAT_SLICE
+            self.chat_slice += 1
+            if not self.chat_on:                  # no chat connection: an empty slice says nothing about chat
+                continue
+            with self.lock:
+                n = sum(self.chat.get(int(t) + i, 0) for i in range(self.CHAT_SLICE))
+            usual = f.usual()
+            self.chat_last = n
+            if not f.add(n):
+                continue
+            self.chat_hits += 1
+            if t - self.CHAT_BEFORE < self.chat_clip_end:
+                continue                          # its clip would overlap the one made for the last spike
+            self.chat_clip_end = t + self.CHAT_AFTER
+            self.manual.append({"start": max(0.0, t - self.CHAT_BEFORE), "end": t + self.CHAT_AFTER,
+                                "why": f"Chat spike: {n} messages in 10 s (usual {usual:g})"})
 
     # ---------------------------------------------------------------- analysis
     def _transcribe_step(self):
@@ -544,8 +588,17 @@ class Session:
                       "rejected": self.rejected, "verdicts": list(reversed(self.verdicts)),
                       "every_min": int(self.settings.get("ai_every_min", 3)) or 3,
                       "auto": None,
-                      "pending_clips": len(self.manual)})
+                      "pending_clips": len(self.manual),
+                      "mode": "chat" if self._chat_mode() else "ai",
+                      "chat_rule": self._chat_card() if self._chat_mode() else None})
         jobs.save(self.job)
+
+    def _chat_card(self):
+        f = self.chat_finder
+        return {"twitch": bool(re.match(r"^https?://(?:www\.)?twitch\.tv/", self.job["source"]["url"])),
+                "connected": self.chat_on, "warming": not f or len(f.history) < f.warmup,
+                "usual": f.usual() if f else 0, "last": self.chat_last, "spikes": self.chat_hits,
+                "min": int(self.settings.get("chat_min") or 10), "ratio": float(self.settings.get("chat_ratio") or 2.5)}
 
     def _analyze(self):
         cid = self.job["creator"]
@@ -567,9 +620,13 @@ class Session:
                 # stream suddenly gets louder or chat busier, or when someone says "clip".
                 every = int(self.settings.get("ai_every_min", 3)) or 3
                 self._watch_spikes()
+                self._chat_rule()
                 sp, said = self.spike, self.said
                 if self.user_stopped:
                     pass
+                elif self._chat_mode():   # chat spikes mode: clips come from _chat_rule, no AI checks at all
+                    self.spike = self.said = None
+                    self.last_check = self.t_done
                 elif said and (self.t_done >= said["t"] + self.SAID_AFTER or (self.ended and not busy)):
                     self.said = None
                     self._ai_check((said["t"] - self.SAID_BEFORE, said["t"] + self.SAID_AFTER), said["why"])

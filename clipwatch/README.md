@@ -3,6 +3,9 @@
 One command that records a Twitch stream, watches its chat, and clips the moments where chat suddenly gets busy.
 It runs on its own and doesn't need the SMS server.
 
+The same rule is built into the dashboard: a creator's **Setup → Clip on chat spikes** makes their live recordings
+clip this way, with captions and posting.
+
 ```bash
 ./watch.sh <twitch_channel>
 ```
@@ -16,7 +19,7 @@ It runs on its own and doesn't need the SMS server.
    the usual number of messages (the middle value of the last 3 minutes) **and** at least `--min` messages.
    Nothing counts during the first minute, while it learns what "usual" is.
 4. **Cuts a clip** for each spike: 20 seconds before and 10 seconds after, center-cropped to a 9:16 vertical
-   video at 1080x1920, saved in `clips/`. A spike inside a clip that's already being made doesn't make a second one.
+   video at 1080x1920, saved in `clips/`. A spike whose clip would overlap the last one doesn't make a second clip.
 5. **Writes subtitles**: Whisper makes an `.srt` next to each clip, in the background.
 
 Stop it with Ctrl+C. Clips already started are finished first. It also stops by itself when the stream ends.

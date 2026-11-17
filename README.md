@@ -68,8 +68,13 @@ your AI service, paste your key and press **Save and test** (see [Choose your AI
 
 ## Clip watcher (one command)
 
-`./watch.sh <twitch_channel>` records a Twitch stream, watches its chat, and saves a 9:16 clip with subtitles
-whenever chat suddenly gets busy. It runs without the SMS server. See [clipwatch/README.md](clipwatch/README.md).
+In the dashboard: open a creator, go to **Setup**, and turn on **Clip on chat spikes**. Their live recordings then
+clip whenever Twitch chat suddenly gets busy (2.5x the usual and at least 10 messages in 10 seconds, both
+adjustable), 20 seconds before the spike and 10 after, instead of asking the AI. Clips get captions and can be
+posted like any other.
+
+Without the dashboard: `./watch.sh <twitch_channel>` does the same from the command line and saves 9:16 clips with
+`.srt` subtitles. See [clipwatch/README.md](clipwatch/README.md).
 
 ## Choose your AI
 
