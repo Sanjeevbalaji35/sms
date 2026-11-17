@@ -1,6 +1,6 @@
 # SMS
 
-Turn long videos and live streams into captioned vertical clips, ready to post. Free and open source: run it on
+Turn long videos and live streams into captioned vertical clips, ready to post. Free to use: run it on
 your own computer or server, with your own AI key.
 
 Paste a YouTube, Twitch or Kick link (or upload a file) and SMS finds the moments worth clipping, cuts them to
