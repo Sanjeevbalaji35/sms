@@ -171,8 +171,15 @@ def test() -> dict:
     ms = models()
     if not ready():
         raise ValueError("Save a service, a model and a key first.")
-    out, sent, wrote = call(ms[0], 'Answer with a JSON array that holds the single string "ok".', {"type": "ARRAY", "items": {"type": "STRING"}})
-    return {"ok": True, "model": ms[0], "tokens": sent + wrote, "answer": str(out)[:80]}
+    import time
+    for attempt in range(3):          # a busy service often answers a few seconds later, as clip finding does
+        try:
+            out, sent, wrote = call(ms[0], 'Answer with a JSON array that holds the single string "ok".', {"type": "ARRAY", "items": {"type": "STRING"}})
+            return {"ok": True, "model": ms[0], "tokens": sent + wrote, "answer": str(out)[:80]}
+        except Exception as e:  # noqa: BLE001
+            if attempt == 2 or not busy(e):
+                raise
+            time.sleep(3 * (attempt + 1))
 
 
 class AIError(RuntimeError):
@@ -182,10 +189,22 @@ class AIError(RuntimeError):
 problem = {"text": "", "at": 0.0}       # why the AI last failed, for the dashboard; cleared when it answers again
 
 
+def busy(e) -> bool:
+    """The service is overloaded for a moment (its side, not the key): worth trying again shortly."""
+    text, low = str(e), str(e).lower()
+    return "HTTP 5" in text or "high demand" in low or "overloaded" in low or "unavailable" in low
+
+
 def explain(e) -> str:
     """What went wrong with an AI call, in words the owner can act on."""
     text, low = str(e), str(e).lower()
     name = (models() or ["?"])[0]
+    if busy(e):
+        tip = (' To switch by itself next time, put a second model after a comma under Settings, AI, for example'
+               ' "gemini-2.5-flash, gemini-2.5-flash-lite".' if provider() == "gemini" and len(models()) < 2 else
+               " To switch by itself next time, put a second model after a comma under Settings, AI." if len(models()) < 2 else "")
+        return (f"{label()} is overloaded right now. That's on {label()}'s side, your key is fine, and it usually passes "
+                f"within minutes. SMS keeps trying, and picks clips by loudness meanwhile.{tip}")
     if "404" in text or "not found" in low or "does not exist" in low or "unknown model" in low or "not_found" in low:
         return f"{label()} doesn't know the model \"{name}\". Open Settings, AI, press Find models and pick one from the list."
     if "401" in text or "403" in text or "api key" in low or "api_key" in low or "unauthorized" in low or "permission" in low:

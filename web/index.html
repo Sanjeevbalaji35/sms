@@ -2316,7 +2316,7 @@ document.addEventListener("click", async e => {
         try { ok = await send("/api/ai/test"); } catch (err) { why = err.message; }
         S.status = await api("/api/status"); drawShell(); await drawSettings();
         if (ok) toast(`Saved. ${ok.model} answered, so the AI is ready.`, "ok");
-        else toast(`Saved, but the test failed. ${why}`, "bad");
+        else toast(/is overloaded right now/.test(why) ? `Saved. ${why}` : `Saved, but the test failed. ${why}`, "bad");
       } finally { b.disabled = false; }
       return;
     }

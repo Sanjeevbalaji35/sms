@@ -113,6 +113,35 @@ with ctx.as_user(u1.id):
 with ctx.as_user(u2.id):
     check("another user sees none of it", usage.summary({})["calls_total"] == 0)
 
+# ---- a busy service (Gemini's "high demand" 503): plain words, and the test button tries again like clip finding does
+busy503 = RuntimeError('HTTP 503 { "error": { "code": 503, "message": "This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.", "status": "UNAVAILABLE" } }')
+_prov, _models, _ready, _call, _sleep = ai.provider, ai.models, ai.ready, ai.call, __import__("time").sleep
+ai.provider, ai.models, ai.ready = (lambda: "gemini"), (lambda: ["gemini-2.5-flash"]), (lambda: True)
+msg = ai.explain(busy503)
+check("an overloaded service is explained in plain words", "overloaded right now" in msg and "key is fine" in msg, msg)
+check("and the fix is suggested: a second model to fall back on", "gemini-2.5-flash-lite" in msg, msg)
+tries = []
+def flaky(model, prompt, schema):
+    tries.append(model)
+    if len(tries) < 3:
+        raise busy503
+    return ["ok"], 5, 1
+ai.call = flaky
+__import__("time").sleep = lambda s: None
+try:
+    got = ai.test()
+    check("the test button tries again when the service is busy", got["ok"] and len(tries) == 3, tries)
+except Exception as e:  # noqa: BLE001
+    check("the test button tries again when the service is busy", False, e)
+tries.clear()
+ai.call = lambda *a: (_ for _ in ()).throw(RuntimeError("HTTP 401 bad key"))
+try:
+    ai.test(); check("a wrong key is not retried", False)
+except Exception:  # noqa: BLE001
+    check("a wrong key is not retried", True)
+ai.provider, ai.models, ai.ready, ai.call = _prov, _models, _ready, _call
+__import__("time").sleep = _sleep
+
 print("ALL PASSED" if not fails else f"{len(fails)} failed")
 import shutil  # noqa: E402
 db.engine.dispose()
