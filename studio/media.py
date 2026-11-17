@@ -3,6 +3,7 @@ import contextlib
 import json
 import re
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -79,15 +80,57 @@ def login_browser() -> str:
 
 
 def guard_opts() -> dict:
-    """Added to every yt-dlp call: Deno's exact location, and the browser login if one is chosen."""
-    opts = {}
+    """Added to every yt-dlp call: Deno's exact location."""
     d = deno_path()
-    if d:
-        opts["js_runtimes"] = {"deno": {"path": d}}
+    return {"js_runtimes": {"deno": {"path": d}}} if d else {}
+
+
+# The browser login is read once and kept in memory while SMS runs, not read again for every download: on a Mac each
+# read of Chrome's login asks for the keychain password. Only the YouTube and Google parts are kept, so nothing
+# else from the browser is ever sent anywhere. It is read again when the browser is changed in Settings, or when
+# YouTube refuses SMS anyway (the login may have run out).
+_login = {"browser": "", "jar": None}
+_login_lock = threading.Lock()
+
+
+def _read_login(browser: str):
+    from yt_dlp.cookies import YoutubeDLCookieJar, extract_cookies_from_browser
+    jar = YoutubeDLCookieJar()
+    for c in extract_cookies_from_browser(browser):
+        d = (c.domain or "").lstrip(".").lower()
+        if d in ("youtube.com", "google.com") or d.endswith((".youtube.com", ".google.com")):
+            jar.set_cookie(c)
+    return jar
+
+
+def login_jar():
+    """The YouTube login from the chosen browser, or None (none chosen, or it couldn't be read: that is
+    remembered too, so a refused keychain isn't asked again on every download, only when the browser is chosen again)."""
     b = login_browser()
-    if b:
-        opts["cookiesfrombrowser"] = (b,)
-    return opts
+    if not b:
+        return None
+    with _login_lock:
+        if _login["browser"] != b or _login["jar"] is None:
+            try:
+                _login.update(browser=b, jar=_read_login(b))
+            except Exception:  # noqa: BLE001
+                _login.update(browser=b, jar=False)
+        return _login["jar"] or None
+
+
+def forget_login():
+    with _login_lock:
+        _login.update(browser="", jar=None)
+
+
+def new_ydl(opts: dict):
+    """A yt-dlp downloader with the guard and, if one is chosen, the browser login (read once, see above)."""
+    import yt_dlp
+    y = yt_dlp.YoutubeDL({**guard_opts(), **opts})
+    jar = login_jar()                        # None: no login, or the browser can't be read (Settings says why)
+    if jar is not None:
+        y.__dict__["cookiejar"] = jar        # used instead of yt-dlp reading the browser itself
+    return y
 
 
 def login_status(check=False) -> dict:
@@ -97,8 +140,9 @@ def login_status(check=False) -> dict:
     if b and check:
         name = BROWSERS[b]
         try:
-            from yt_dlp.cookies import extract_cookies_from_browser
-            jar = extract_cookies_from_browser(b)
+            jar = login_jar()
+            if jar is None:
+                raise RuntimeError("could not read the browser")
             signed_in = any(c.domain.endswith("youtube.com") and c.name in ("LOGIN_INFO", "SID", "__Secure-3PSID", "SAPISID")
                             for c in jar)
             out["ok"] = signed_in
@@ -119,6 +163,7 @@ def set_login_browser(b: str) -> dict:
     if b and b not in BROWSERS:
         raise ValueError("Choose one of the browsers in the list.")
     _login_file().write_text(json.dumps({"browser": b}), encoding="utf-8")
+    forget_login()
     _yt_refused_until = 0.0          # try YouTube again straight away
     return login_status(check=True)
 
@@ -144,6 +189,7 @@ def note_refusal(url: str, err) -> bool:
     global _yt_refused_until
     if is_youtube(url) and _BOT_CHECK.search(str(err)):
         _yt_refused_until = time.time() + YT_PAUSE
+        forget_login()                       # read the browser login again next time, in case it ran out
         return True
     return False
 
@@ -191,11 +237,10 @@ class _Quiet:
 
 
 def _ydl(opts):
-    import yt_dlp
     # a channel or playlist link is answered as "a list" straight away, never walked video by video
-    return yt_dlp.YoutubeDL({"noplaylist": True, "quiet": True, "no_warnings": True, "logger": _Quiet(),
+    return new_ydl({"noplaylist": True, "quiet": True, "no_warnings": True, "logger": _Quiet(),
                              "extract_flat": "in_playlist", "playlistend": 1, "socket_timeout": 20,
-                             "concurrent_fragment_downloads": 4, **guard_opts(), **opts})
+                             "concurrent_fragment_downloads": 4, **opts})
 
 
 def _video_format(height):

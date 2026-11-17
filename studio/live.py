@@ -55,7 +55,7 @@ def resolve(url: str) -> dict:
     if media.is_youtube(url) and media.youtube_paused():
         raise NotLive(media.YT_BLOCKED)
     try:
-        with yt_dlp.YoutubeDL({**media.guard_opts(), **opts}) as ydl:
+        with media.new_ydl(opts) as ydl:
             info = ydl.extract_info(url, download=False)
     except Exception as e:  # noqa: BLE001
         if media.note_refusal(url, e):
