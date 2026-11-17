@@ -431,7 +431,7 @@ def asset(name: str):
 
 @app.get("/favicon.ico")
 def favicon():
-    return RedirectResponse("/brand/favicon.svg", 308)
+    return RedirectResponse("/brand/favicon.svg?v=sms", 307)
 
 
 # ================================================================ sign up, sign in, sign out
