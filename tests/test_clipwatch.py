@@ -66,12 +66,14 @@ threading.Thread(target=chat_server, daemon=True).start()
 
 # ---- a fake streamlink: writes a 1280x720 test stream into --output in real time for 32 seconds
 bin_ = tmp / "bin"; bin_.mkdir()
-(bin_ / "streamlink").write_text(f"""#!{sys.executable}
+(bin_ / "streamlink").write_text(f"""#!/bin/sh
+exec "{sys.executable}" - "$@" << 'PYEOF'
 import subprocess, sys
 out = sys.argv[sys.argv.index("--output") + 1]
 subprocess.run(["ffmpeg", "-loglevel", "error", "-re", "-f", "lavfi", "-i", "testsrc=size=1280x720:rate=30",
                 "-f", "lavfi", "-i", "sine=frequency=440", "-t", "32", "-c:v", "libx264", "-preset", "ultrafast",
                 "-c:a", "aac", "-f", "mpegts", out])
+PYEOF
 """)
 (bin_ / "streamlink").chmod(0o755)
 os.environ["PATH"] = f"{bin_}{os.pathsep}{os.environ['PATH']}"
@@ -93,7 +95,10 @@ if clips:
     check("the clip is before + after long", float(p["format"]["duration"]), lambda d: abs(d - 6) < 0.6)
 
 # ---- a channel that isn't live: streamlink gives up, and so do we, with its message
-(bin_ / "streamlink").write_text(f"#!{sys.executable}\nprint('error: No playable streams found on this URL')\nraise SystemExit(1)\n")
+(bin_ / "streamlink").write_text(f"""#!/bin/sh
+echo 'error: No playable streams found on this URL'
+exit 1
+""")
 check("an offline channel stops with an error", cw.main(["offline", "--no-subs", "--out", str(tmp / "off")]), 1)
 
 # ---- subtitles, with a stand-in for Whisper (the real one downloads its model from the internet)

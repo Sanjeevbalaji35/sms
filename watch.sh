@@ -4,4 +4,13 @@
 # Clips land in clips/, the full recording in rec/. Stop with Ctrl+C. See clipwatch/README.md.
 set -euo pipefail
 cd "$(dirname "$0")"
-exec python3 -m clipwatch "$@"
+
+if [ -x ".venv/bin/python" ]; then
+  PYTHON=".venv/bin/python"
+elif [ -x ".venv/bin/python3" ]; then
+  PYTHON=".venv/bin/python3"
+else
+  PYTHON="python3"
+fi
+
+exec "$PYTHON" -m clipwatch "$@"
