@@ -46,7 +46,8 @@ run_to(101, lambda t: 3)                                        # 30 in the slic
 check("a burst asks for one clip", len(s.manual), 1)
 req = s.manual[0] if s.manual else {}
 check("20 s before and 10 s after the spike", (req.get("start"), req.get("end")), (70, 100))
-check("the clip says why", req.get("why", ""), lambda w: w.startswith("Chat spike: 30 messages"))
+check("the clip says why", req.get("why", ""), "30 messages in 10 s, usually 5")
+check("and is named after the moment", req.get("title"), "Chat spike at 0:01:30")
 run_to(111, lambda t: 3)                                        # still busy straight after: inside the same clip
 check("a spike right after doesn't make an overlapping clip", len(s.manual), 1)
 check("but it is counted on the card", s._chat_card()["spikes"], 2)
@@ -78,7 +79,8 @@ s3._add_clip = lambda clip: made.append(clip)
 s3._scan_segments = lambda: None
 s3._transcribe_step = lambda: False
 s3._publish = lambda: None
-live.brain.describe = lambda *a, **k: {"title": "", "hook": "", "score": 0}
+described = []
+live.brain.describe = lambda *a, **k: described.append(a) or {"title": "AI title", "hook": "AI hook", "score": 0}
 live.creators.log = lambda *a, **k: None
 live.alerts.notify = lambda *a, **k: None
 live.jobs.submit_live = lambda fn: fn()
@@ -95,6 +97,12 @@ s3.said = {"t": 95.0, "why": 'Someone said "clip"'}
 s3._analyze()
 check("no AI checks in chat mode", asked, [])
 check("the chat clip is made when the stream ends", [(m["start"], m["end"]) for m in made], [(70, 100)])
+check("no AI call for its title either", described, [])
+check("it gets a plain title, no hook, and is marked as a chat clip", [(m["title"], m["hook"], m.get("kind"), m.get("reason")) for m in made],
+      [("Chat spike at 0:01:30", "", "chat", "30 messages in 10 s, usually 5")])
+s3.manual.append({"start": 10, "end": 40})                    # a hand clip still gets its AI title
+s3._manual_step()
+check("hand clips still get an AI title", (len(described), made[-1]["title"]), (1, "AI title"))
 
 print("ALL PASSED" if not fails else f"{len(fails)} FAILED")
 sys.exit(1 if fails else 0)

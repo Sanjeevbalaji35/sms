@@ -321,8 +321,9 @@ class Session:
             if t - self.CHAT_BEFORE < self.chat_clip_end:
                 continue                          # its clip would overlap the one made for the last spike
             self.chat_clip_end = t + self.CHAT_AFTER
-            self.manual.append({"start": max(0.0, t - self.CHAT_BEFORE), "end": t + self.CHAT_AFTER,
-                                "why": f"Chat spike: {n} messages in 10 s (usual {usual:g})"})
+            self.manual.append({"start": max(0.0, t - self.CHAT_BEFORE), "end": t + self.CHAT_AFTER, "chat": True,
+                                "title": f"Chat spike at {int(t // 3600)}:{int(t % 3600 // 60):02}:{int(t % 60):02}",
+                                "why": f"{n} messages in 10 s, usually {usual:g}"})
 
     # ---------------------------------------------------------------- analysis
     def _transcribe_step(self):
@@ -488,9 +489,13 @@ class Session:
     def _manual_step(self):
         for req in [m for m in self.manual if m["end"] <= self.t_done or self.ended]:
             self.manual.remove(req)
-            text = " ".join(w["w"] for w in self.words if req["start"] <= w["s"] <= req["end"])
-            usage.set_context(self.job["creator"], self.job["title"] or "Live stream")
-            c = brain.describe(text, self.job["title"], self.job["uploader"])
+            if req.get("chat"):        # chat spikes mode: no AI at all, not even for the title
+                c = {"score": 0, "category": "other", "hook": "", "title": req["title"], "description": "",
+                     "hashtags": [], "highlight_words": [], "kind": "chat"}
+            else:
+                text = " ".join(w["w"] for w in self.words if req["start"] <= w["s"] <= req["end"])
+                usage.set_context(self.job["creator"], self.job["title"] or "Live stream")
+                c = brain.describe(text, self.job["title"], self.job["uploader"])
             c.update(start=round(req["start"], 2), end=round(min(req["end"], self.samples / SR), 2), score=0)
             if req.get("why"):
                 c["reason"] = req["why"]
