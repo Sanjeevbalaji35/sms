@@ -1,4 +1,4 @@
-# PeakCut
+# jj
 
 Turn long videos and live streams into captioned vertical clips, ready to post. Free and open source: run it on
 your own computer or server, with your own AI key.
