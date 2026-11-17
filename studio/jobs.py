@@ -108,7 +108,10 @@ _lock = threading.RLock()
 on_clip_ready: list = []   # callbacks (job, clip), run once when a clip first finishes
 
 DEFAULTS = {"max_clips": 6, "min_len": 15, "max_len": 60, "style": "bounce", "layout": "blur", "quality": 720,
-            "range_start": None, "range_end": None, "captions": True}
+            "range_start": None, "range_end": None, "captions": True,
+            "mood": "any", "pick_by": "ai", "use_comments": True, "use_visual": False}
+MOODS = ("any", "funny", "hype", "emotional", "shock", "story", "take")
+PICK_BY = ("ai", "sound", "reactions", "action")
 
 
 LIMITS = {"max_clips": (1, 20), "min_len": (5, 120), "max_len": (10, 180), "quality": (360, 1080)}
@@ -118,9 +121,9 @@ def clean_options(options) -> dict:
     """Only known settings, each inside its allowed range. Raises ValueError on nonsense."""
     out = {}
     for k, v in (options if isinstance(options, dict) else {}).items():
-        if k == "captions":
+        if k in ("captions", "use_comments", "use_visual"):
             if not isinstance(v, bool):
-                raise ValueError("Captions must be on or off.")
+                raise ValueError("Captions must be on or off." if k == "captions" else "That setting must be on or off.")
             out[k] = v
             continue
         if k not in DEFAULTS or v in ("", None):
@@ -132,6 +135,10 @@ def clean_options(options) -> dict:
             v = v if v in render.STYLES else DEFAULTS["style"]
         elif k == "layout":
             v = v if v in render.LAYOUTS else DEFAULTS["layout"]
+        elif k == "mood":
+            v = v if v in MOODS else "any"
+        elif k == "pick_by":
+            v = v if v in PICK_BY else "ai"
         else:                                    # range_start, range_end: seconds into the video
             v = float(v)
             if not math.isfinite(v) or v < 0:
@@ -139,6 +146,56 @@ def clean_options(options) -> dict:
         out[k] = v
     if out.get("range_end") is not None and out["range_end"] <= out.get("range_start", 0):
         raise ValueError("The end of the chosen part must be after its start.")
+    return out
+
+
+PICKED_BY = {"sound": "Picked by loudness, without AI.", "reactions": "Picked by viewer reactions, without AI.",
+             "action": "Picked by on-screen action, without AI."}
+
+
+class _Done:
+    """A finished background task, for signals that weren't asked for."""
+    def __init__(self, value=None):
+        self.value = value
+
+    def result(self):
+        return self.value
+
+
+def _extra_signals(job, o, src, d, start, length, video, notes):
+    """Viewer reactions and on-screen action, gathered in the background while the transcript is written.
+    Returns {"reactions": future, "action": future}; each result is a per-second array or None."""
+    from concurrent.futures import ThreadPoolExecutor
+    from . import signals
+    by = o.get("pick_by", "ai")
+    want_rx = src["type"] == "url" and (by == "reactions" or (by == "ai" and o.get("use_comments", True)))
+    want_ax = by == "action" or (by == "ai" and o.get("use_visual", False))
+    pool = ThreadPoolExecutor(2, thread_name_prefix="signals")
+    out = {"reactions": _Done(), "action": _Done()}
+    if want_rx:
+        out["reactions"] = pool.submit(ctx.bind(signals.reactions), src["url"], start, length, notes.append)
+
+    def picture():
+        if src["type"] != "url":
+            return signals.action(src["path"], start, length)
+        if video is not None:                        # the whole video is being fetched anyway: measure that
+            try:
+                return signals.action(video.result(), start, length)
+            except Exception:  # noqa: BLE001 - fall through to a small copy of its own
+                pass
+        low = None
+        try:
+            low = signals.lowres_video(src["url"], d, start or None, (start + length) if o.get("range_end") else None)
+            return signals.action(low, 0 if o.get("range_start") or o.get("range_end") else start, length)
+        except Exception as e:  # noqa: BLE001
+            notes.append(f"Couldn't measure the picture ({str(e)[-80:]})")
+            return None
+        finally:
+            if low:
+                Path(low).unlink(missing_ok=True)
+    if want_ax:
+        out["action"] = pool.submit(ctx.bind(picture))
+    pool.shutdown(wait=False)
     return out
 
 
@@ -288,7 +345,8 @@ def create(source: dict, options: dict, enqueue=True, creator=None, kind="video"
     c = creators.get(creator) if creator else None
     if c:
         d = creators.root(c["id"]) / ("live" if kind == "live" else "videos") / jid
-        base = {**DEFAULTS, **{k: c[k] for k in ("max_clips", "min_len", "max_len", "style", "layout", "captions")}}
+        base = {**DEFAULTS, **{k: c[k] for k in ("max_clips", "min_len", "max_len", "style", "layout", "captions")},
+                **{k: c[k] for k in ("mood", "pick_by", "use_comments", "use_visual") if k in c}}
     else:
         d, base, creator = config.user_dir(ctx.uid()) / "jobs" / jid, dict(DEFAULTS), None
     opts = {**base, **clean_options(options)}
@@ -582,6 +640,7 @@ def _run_job(job):
     hi = min(len(audio), int(o["range_end"] * 16000)) if o["range_end"] else len(audio)
     span = (hi - lo) / 16000
     db = media.loudness_per_second(audio[lo:hi])
+    extra = _extra_signals(job, o, src, d, lo / 16000, int(span) + 1, video, notes)
 
     vlock, vstate = threading.Lock(), {}
 
@@ -699,8 +758,12 @@ def _run_job(job):
             continue
         quota = max(1, math.ceil(left / (len(blocks) - bi)))
         s0 = int((a - lo) / 16000)
-        found, ai = brain.find_clips(bw, db[s0: s0 + int((b - a) / 16000) + 1], (b - a) / 16000, job["title"],
-                                     job["uploader"], quota, int(o["min_len"]), int(o["max_len"]), notes.append)
+        s1 = s0 + int((b - a) / 16000) + 1
+        rx, ax = (extra[k].result() for k in ("reactions", "action"))
+        found, ai = brain.find_clips(bw, db[s0:s1], (b - a) / 16000, job["title"], job["uploader"], quota,
+                                     int(o["min_len"]), int(o["max_len"]), notes.append, mood=o.get("mood", "any"),
+                                     pick_by=o.get("pick_by", "ai"), reactions=None if rx is None else rx[s0:s1],
+                                     action=None if ax is None else ax[s0:s1])
         tokens += ai.get("tokens", 0)
         model = ai.get("model") or model
         if ai.get("note"):
@@ -727,8 +790,10 @@ def _run_job(job):
     fetch.shutdown(wait=False)
     del audio
     clips = job["clips"]
+    by = o.get("pick_by", "ai")
     job["ai"] = {"model": model, "tokens": tokens, "log": notes[-5:],
-                 "note": "The AI was unavailable, so clips were picked by loudness only." if clips and not model else ""}
+                 "note": (PICKED_BY[by] if by != "ai" else "The AI was unavailable, so clips were picked by loudness only.")
+                         if clips and not model else ""}
     stage = "Done" if clips else "Done, but nothing clip-worthy was found"
     _set(job, status="done", stage=stage, progress=1.0, took=round(time.time() - t0))
     try:

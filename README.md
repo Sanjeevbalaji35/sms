@@ -11,6 +11,9 @@ creator's live stream and clip the highlights while the stream is still running.
 
 - **Clips from any video.** Transcribes the audio, asks an AI which moments would hold a stranger's attention, and
   renders each one with captions in one of three styles.
+- **Choose what to clip.** Ask for a mood (funny, exciting, emotional, shocking, storytime, hot takes) and how
+  moments are found: the AI reading everything, or with no AI by sound, by viewer reactions (timestamps in YouTube
+  comments, Twitch chat replay) or by on-screen action. Under Options when you paste a link, and in each creator's Setup.
 - **Live clipping.** Records a stream into a rolling buffer and clips as it happens, using loudness, chat activity
   and the transcript.
 - **Workspaces per creator.** Channels, clip settings, posting rules and an activity log for each creator you clip.

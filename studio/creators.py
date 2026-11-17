@@ -18,6 +18,7 @@ DEFAULTS = {"name": "", "channel": "", "style": "bounce", "layout": "blur", "cap
             "max_clips": 6, "min_score": 80, "auto_watch": False, "buffer_min": 20, "live_per_hour": 4, "ai_every_min": 3, "ai_only_on_spike": True, "auto_jump_pct": 60,
             "plan": "free", "decide_mode": "both", "must_clip_min": 0, "min_gap_min": 2,
             "trigger_words": "clip that, clip it", "chat_clips": False, "chat_min": 10, "chat_ratio": 2.5,
+            "mood": "any", "pick_by": "ai", "use_comments": True, "use_visual": False,
             "autopost": False, "accounts": [], "post_min_score": 75, "post_gap_min": 45, "daily_cap": 6,
             "privacy": "public", "post_footer": "", "rate_per_1k": 0.0, "channels": {}}
 PLATFORMS = ("youtube", "twitch", "kick")
@@ -65,12 +66,16 @@ def _clean(data: dict) -> dict:
         if k in NUMERIC:
             lo, hi = NUMERIC[k]
             v = max(lo, min(hi, int(float(v))))
-        elif k in ("auto_watch", "autopost", "ai_only_on_spike", "chat_clips"):
+        elif k in ("auto_watch", "autopost", "ai_only_on_spike", "chat_clips", "use_comments", "use_visual"):
             v = bool(v)
         elif k == "channels":
             v = {p: str(u).strip()[:300] for p, u in (v.items() if isinstance(v, dict) else []) if p in PLATFORMS and str(u).strip()}
         elif k == "accounts":
             v = [str(x) for x in v][:20] if isinstance(v, list) else []
+        elif k == "mood":
+            v = v if v in ("any", "funny", "hype", "emotional", "shock", "story", "take") else "any"
+        elif k == "pick_by":
+            v = v if v in ("ai", "sound", "reactions", "action") else "ai"
         elif k == "chat_ratio":
             v = round(max(1.2, min(10.0, float(v or 2.5))), 1)
         elif k == "rate_per_1k":
