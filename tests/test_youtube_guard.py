@@ -71,7 +71,17 @@ check("SMS_YT_BROWSER in .env wins", (media.login_browser(), media.login_status(
 os.environ.pop("SMS_YT_BROWSER")
 media.set_login_browser("")
 check("turning it off", media.login_browser(), "")
-check("the blocked message points to the fix", media.YT_BLOCKED, lambda m: m.endswith("Settings, YouTube login."))
+check("blocked, no login chosen: says to choose one", media.blocked_message(), lambda m: "Settings, YouTube login, and choose the browser" in m)
+media._login_file().write_text(json.dumps({"browser": "safari"})); media.forget_login()
+ydc.extract_cookies_from_browser = broken
+check("blocked, login can't be read: says so, by name", media.blocked_message(), lambda m: "couldn't read your YouTube login from Safari" in m)
+ydc.extract_cookies_from_browser = fake_browser; media.forget_login()
+check("blocked even with the login: says to check it's still signed in", media.blocked_message(), lambda m: "even with your YouTube login from Safari" in m)
+_gp = media.guard_problems; media.guard_problems = lambda: ["Deno is missing"]
+check("blocked with the guard missing: says that first, and how to fix it", media.blocked_message(), lambda m: "guard isn't installed (Deno is missing)" in m and "Start SMS" in m)
+media.guard_problems = _gp
+check("recording a YouTube stream says so", media.blocked_message("record YouTube streams"), lambda m: m.startswith("YouTube isn't letting SMS record YouTube streams"))
+media.set_login_browser("")
 
 config.ACCOUNTS = True                  # a shared server: a file saved earlier is not used, only .env
 media._login_file().write_text(json.dumps({"browser": "chrome"}))
