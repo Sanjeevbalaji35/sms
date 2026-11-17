@@ -30,3 +30,7 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
+
+# ---- clip watcher output
+rec/
+clips/

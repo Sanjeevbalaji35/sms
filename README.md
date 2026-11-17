@@ -66,6 +66,11 @@ The first start downloads the speech model by itself (about 480 MB, once).
 Open http://127.0.0.1:8765. There is no sign-in: it opens straight into the dashboard. Go to **Settings, AI**, choose
 your AI service, paste your key and press **Save and test** (see [Choose your AI](#choose-your-ai)).
 
+## Clip watcher (one command)
+
+`./watch.sh <twitch_channel>` records a Twitch stream, watches its chat, and saves a 9:16 clip with subtitles
+whenever chat suddenly gets busy. It runs without the SMS server. See [clipwatch/README.md](clipwatch/README.md).
+
 ## Choose your AI
 
 SMS needs a chat model that can return JSON. The easy way is in the dashboard: **Settings, AI**. Pick the
