@@ -20,12 +20,107 @@ NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 YT_PAUSE = 600
 _yt_refused_until = 0.0
 YT_BLOCKED = ("YouTube isn't letting SMS download videos right now. Upload the video file instead, or use a "
-              "Twitch or Kick link. YouTube links will be tried again in a few minutes.")
+              "Twitch or Kick link. YouTube links will be tried again in a few minutes."
+              + ("" if config.ACCOUNTS else " To fix it for good: Settings, YouTube login."))
 _BOT_CHECK = re.compile(r"not a bot|confirm you.?re not|sign in to confirm(?! your age)", re.I)
 
 
 class YouTubeBlocked(RuntimeError):
     pass
+
+
+# ---------------------------------------------------------------- the guard against YouTube's bot check
+# YouTube sends each player a small puzzle written in JavaScript. yt-dlp solves it with Deno (a JavaScript program)
+# and its solver scripts (yt-dlp-ejs); both come with `pip install -r requirements.txt`. Without them YouTube soon
+# treats SMS as a bot. Deno installed by pip is often not on the PATH, so SMS tells yt-dlp exactly where it is.
+# On top of that, on your own computer SMS can use the YouTube login from your browser (Settings, YouTube login).
+BROWSERS = {"chrome": "Chrome", "edge": "Edge", "firefox": "Firefox", "brave": "Brave", "safari": "Safari",
+            "opera": "Opera", "vivaldi": "Vivaldi", "chromium": "Chromium"}
+
+
+def deno_path() -> str:
+    """Where Deno is, or "" if it is missing."""
+    import shutil
+    try:
+        import deno
+        found = deno.find_deno_bin()
+        if found and Path(found).is_file():
+            return str(found)
+    except Exception:  # noqa: BLE001 - not installed through pip: look on the PATH
+        pass
+    return shutil.which("deno") or ""
+
+
+def guard_problems() -> list:
+    """What is missing from the guard, in plain words. Empty when all is well."""
+    out = []
+    if not deno_path():
+        out.append("Deno is missing")
+    try:
+        import yt_dlp_ejs  # noqa: F401
+    except ImportError:
+        out.append("yt-dlp's YouTube solver (yt-dlp-ejs) is missing")
+    return out
+
+
+def _login_file() -> Path:
+    return config.DATA_DIR / "youtube.json"
+
+
+def login_browser() -> str:
+    """The browser whose YouTube login SMS uses, or "". SMS_YT_BROWSER in .env wins over the dashboard."""
+    b = (config.env("SMS_YT_BROWSER") or "").strip().lower()
+    if not b and not config.ACCOUNTS:
+        try:
+            b = str(json.loads(_login_file().read_text(encoding="utf-8")).get("browser") or "")
+        except (OSError, ValueError):
+            b = ""
+    return b if b in BROWSERS else ""
+
+
+def guard_opts() -> dict:
+    """Added to every yt-dlp call: Deno's exact location, and the browser login if one is chosen."""
+    opts = {}
+    d = deno_path()
+    if d:
+        opts["js_runtimes"] = {"deno": {"path": d}}
+    b = login_browser()
+    if b:
+        opts["cookiesfrombrowser"] = (b,)
+    return opts
+
+
+def login_status(check=False) -> dict:
+    b = login_browser()
+    out = {"browser": b, "browsers": BROWSERS, "from_env": bool((config.env("SMS_YT_BROWSER") or "").strip()),
+           "guard": guard_problems()}
+    if b and check:
+        name = BROWSERS[b]
+        try:
+            from yt_dlp.cookies import extract_cookies_from_browser
+            jar = extract_cookies_from_browser(b)
+            signed_in = any(c.domain.endswith("youtube.com") and c.name in ("LOGIN_INFO", "SID", "__Secure-3PSID", "SAPISID")
+                            for c in jar)
+            out["ok"] = signed_in
+            out["note"] = (f"Found your YouTube login in {name}. YouTube links will use it." if signed_in else
+                           f"{name} isn't signed in to YouTube. Open youtube.com in {name}, sign in, then choose it here again.")
+        except Exception:  # noqa: BLE001
+            out["ok"] = False
+            out["note"] = (f"SMS couldn't read {name}'s login. Close {name} completely and choose it again"
+                           + (", and click Allow if your Mac asks for the keychain password." if b in ("chrome", "brave", "edge", "opera", "vivaldi", "chromium") else ".")
+                           + (" On a Mac, Safari also needs Full Disk Access for Terminal." if b == "safari" else "")
+                           + " If it still fails, try Firefox.")
+    return out
+
+
+def set_login_browser(b: str) -> dict:
+    global _yt_refused_until
+    b = (b or "").strip().lower()
+    if b and b not in BROWSERS:
+        raise ValueError("Choose one of the browsers in the list.")
+    _login_file().write_text(json.dumps({"browser": b}), encoding="utf-8")
+    _yt_refused_until = 0.0          # try YouTube again straight away
+    return login_status(check=True)
 
 
 def is_youtube(url: str) -> bool:
@@ -100,7 +195,7 @@ def _ydl(opts):
     # a channel or playlist link is answered as "a list" straight away, never walked video by video
     return yt_dlp.YoutubeDL({"noplaylist": True, "quiet": True, "no_warnings": True, "logger": _Quiet(),
                              "extract_flat": "in_playlist", "playlistend": 1, "socket_timeout": 20,
-                             "concurrent_fragment_downloads": 4, **opts})
+                             "concurrent_fragment_downloads": 4, **guard_opts(), **opts})
 
 
 def _video_format(height):

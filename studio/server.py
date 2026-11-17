@@ -66,6 +66,9 @@ def _startup():
     render.install_fonts()
     if _tools.missing():
         print("\n  " + _tools.HELP + "\n", flush=True)
+    if media.guard_problems():      # without the guard YouTube soon takes SMS for a bot
+        print("\n  YouTube downloads aren't protected: " + " and ".join(media.guard_problems()) + ". In the SMS folder run:"
+              "\n    pip install -r requirements.txt\n  then start SMS again.\n", flush=True)
     if not transcribe.REMOTE and config.env("SMS_FETCH_MODEL", "1") != "0":     # the speech model: fetched now, in the background, if it was never downloaded
         from . import fetch_model
         threading.Thread(target=lambda: _quiet(fetch_model.ensure), daemon=True).start()
@@ -1299,6 +1302,23 @@ def ai_test(request: Request):
         raise HTTPException(400, str(e))
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, ai.explain(e) or "The AI did not answer: " + _ai_error(e))
+
+
+@app.get("/api/youtube-login")
+def youtube_login_get(request: Request):
+    _admin(request)
+    return dict(media.login_status(), shared=config.ACCOUNTS)
+
+
+@app.put("/api/youtube-login")
+def youtube_login_put(request: Request, body: dict = Body(...)):
+    _admin(request)
+    if config.ACCOUNTS:      # the browser login of whoever runs the server is no one else's to use
+        raise HTTPException(400, "Only on your own computer. On a shared server, set SMS_YT_BROWSER in .env.")
+    try:
+        return dict(media.set_login_browser(str(body.get("browser") or "")), shared=False)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 # ================================================================ posting, accounts, settings

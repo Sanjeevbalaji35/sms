@@ -66,6 +66,15 @@ The first start downloads the speech model by itself (about 480 MB, once).
 Open http://127.0.0.1:8765. There is no sign-in: it opens straight into the dashboard. Go to **Settings, AI**, choose
 your AI service, paste your key and press **Save and test** (see [Choose your AI](#choose-your-ai)).
 
+## If YouTube blocks downloads
+
+YouTube sometimes says SMS looks like a bot. Two things stop that:
+
+- **The guard** (installed for you): `pip install -r requirements.txt` installs Deno and yt-dlp's YouTube solver,
+  which answer YouTube's checks. If they are missing, SMS says so when it starts and in Settings.
+- **Your YouTube login:** in **Settings, YouTube login**, pick the browser you're signed in to YouTube with. SMS
+  then downloads the way you'd watch. Only on your own computer.
+
 ## Clip watcher (one command)
 
 In the dashboard: open a creator, go to **Setup**, and turn on **Clip on chat spikes**. Their live recordings then

@@ -1313,7 +1313,7 @@ function pathFor(v, tab) {
 function fromPath(path) {
   const m = path.match(/^\/app\/creators\/([^/]+)(?:\/(setup|activity|clips))?\/?$/);
   if (m) return ["c:" + decodeURIComponent(m[1]), m[2] || "clips"];
-  const st = path.match(/^\/app\/settings(?:\/(ai|profile|security|apps|storage))?\/?$/);
+  const st = path.match(/^\/app\/settings(?:\/(ai|profile|security|apps|youtube|storage))?\/?$/);
   if (st) return ["settings", st[1] || null];
   const k = Object.keys(ROUTES).find(x => ROUTES[x] && path.replace(/\/$/, "") === "/app/" + ROUTES[x]);
   return [k || "overview", "clips"];
@@ -2019,6 +2019,7 @@ const setTabs = () => [
   ...(S.status.accounts === false ? [] : [["profile", "Profile", "user", "Your name, email and how you sign in"],
                                           ["security", "Security", "lock", "Password and signing out"]]),
   ["apps", "Connected apps", "plug", "Where your clips get posted"],
+  ...(S.status.user?.is_admin ? [["youtube", "YouTube login", "shield", "Stop YouTube blocking downloads"]] : []),
   ...(S.status.user?.is_admin ? [["storage", "Storage", "folder", "Where videos and clips are kept"]] : [])];
 function aiHints() {
   const k = S.ai, sel = $("#ai_provider"); if (!k || !sel) return;
@@ -2028,6 +2029,19 @@ function aiHints() {
   $("#ai_model").placeholder = pv.example ? "For example " + pv.example : "The model id, exactly as the service names it";
   $("#ai_base").placeholder = pv.address || "http://127.0.0.1:1234/v1";
   $("#ai_basewrap").hidden = pv.id !== "custom" && !(same && k.base_url);
+}
+function drawYoutubeLogin(body, y, note) {
+  const guard = y.guard?.length ? `<div class="vb" role="alert" style="margin:0 0 16px">${ic("warn")}<span><b>The YouTube guard isn't installed:</b> ${esc(y.guard.join(", "))}. In the SMS folder run <code>pip install -r requirements.txt</code>, then start SMS again.</span></div>` : "";
+  const state = !y.browser ? `<span class="pill">Off</span><span class="sub">Downloads don't use a login.</span>`
+    : note ? `<span class="pill ${note.ok ? "ok" : "warn"}">${note.ok ? ic("check") + "Working" : "Check this"}</span><span class="sub">${esc(note.note)}</span>`
+    : `<span class="pill ok">${ic("check")}On</span><span class="sub">Using your YouTube login from ${esc(y.browsers[y.browser])}.</span>`;
+  body.innerHTML = `<section class="set-sec"><h2>YouTube login</h2>
+    <p class="help">If YouTube says SMS looks like a bot, SMS can use the YouTube login from a browser on this computer, the way you'd watch it yourself. Sign in to youtube.com in that browser first, then choose it below.</p>
+    ${guard}<div class="ai-state">${state}</div>
+    ${y.shared ? `<p class="sub">This is a shared server, so it can't use anyone's browser. Set <code>SMS_YT_BROWSER</code> in .env instead.</p>`
+      : y.from_env ? `<p class="sub">Set by <code>SMS_YT_BROWSER</code> in .env. Change it there.</p>`
+      : `<div class="fields narrow"><label class="f">Use my YouTube login from<select id="yt_browser"><option value="">Off</option>${Object.entries(y.browsers).map(([k, l]) => `<option value="${k}" ${k === y.browser ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label></div>`}
+  </section>`;
 }
 async function drawSettings() {
   const box = $("#sform"); if (!box) return;
@@ -2072,6 +2086,7 @@ async function drawSettings() {
         <section class="set-sec"><h2 style="color:var(--bad)">Delete account</h2><p class="help">Removes your account and everything in it for good: creators, recordings, videos, clips and history.</p>
           <button class="btn danger" data-act="delaccount">${ic("trash")}Delete my account</button></section>`;
     }
+    if (tab === "youtube") drawYoutubeLogin(body, await api("/api/youtube-login"));
     if (tab === "storage") {
       const s = S.stor = await api("/api/storage");
       const usedPct = s.total_gb ? Math.min(100, Math.max(1, 100 * (s.total_gb - s.free_gb) / s.total_gb)) : 0;
@@ -2240,6 +2255,12 @@ function syncCaptionStyle(toggle) {
   toggle.closest("#addform, #cform, #clipdlg").querySelectorAll("[data-caption-style]").forEach(i => i.disabled = !toggle.checked);
 }
 document.addEventListener("change", async e => {
+  if (e.target.id === "yt_browser") {
+    const sel = e.target; sel.disabled = true;
+    try { const y = await send("/api/youtube-login", {browser: sel.value}, "PUT"); drawYoutubeLogin($("#setbody"), y, y.browser ? y : null); }
+    catch (err) { toast(err.message, "bad"); sel.disabled = false; }
+    return;
+  }
   const t = e.target;
   if (t.id === "o_creator") {
     const toggle = $("#o_captions"), c = S.creators.find(c => c.id === t.value);
