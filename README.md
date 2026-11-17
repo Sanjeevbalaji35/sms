@@ -23,8 +23,7 @@ creator's live stream and clip the highlights while the stream is still running.
 
 ## Quick start
 
-You need Python 3.10 or newer and `ffmpeg`. On Windows: `winget install Gyan.FFmpeg`. On a Mac: `brew install ffmpeg`.
-On Linux: `sudo apt install ffmpeg`. SMS finds it by itself and tells you in the dashboard if it is missing.
+Get the folder once, then double-click to start. Python and ffmpeg are installed for you where possible.
 
 Put SMS in a short folder that stays put: `C:\sms` on Windows, `~/sms` on a Mac or Linux. Not inside a
 temporary folder or an AI assistant's workspace: those get cleaned up, and on Windows a folder that deep stops the
@@ -34,36 +33,34 @@ installs it for you, it should ask you where to put it first ([AGENTS.md](AGENTS
 On Windows:
 
 ```bash
-git clone <this repository> C:\sms
-```
-
-```bash
-cd C:\sms
+git clone https://github.com/Sanjeevbalaji35/sms.git C:\sms
 ```
 
 On a Mac or Linux:
 
 ```bash
-git clone <this repository> ~/sms
+git clone https://github.com/Sanjeevbalaji35/sms.git ~/sms
 ```
 
-```bash
-cd ~/sms
-```
+Then **double-click to start**:
 
-```bash
-pip install -r requirements.txt
-```
+- **Windows:** `Start SMS` in the folder.
+- **Mac:** `Start SMS.command` in the folder. The first time, macOS may ask whether to open it: click **Open**.
+- **Linux, or from a terminal:** `python3 start.py`
 
-Start the server:
+The first start sets everything up by itself, which takes a few minutes, once: SMS's own Python folder (`.venv`, so
+nothing else on your computer changes), everything it needs, and ffmpeg if it's missing. Each start after that also
+gets the latest version first, then opens SMS in your browser. Keep the window open while you use SMS; close it to
+stop SMS. Double-clicking again while it runs just opens the browser.
 
-```bash
-python -m studio.server
-```
+If Python isn't installed: on Windows, `Start SMS` installs it for you, then asks you to double-click again. On a Mac,
+get it from [python.org](https://www.python.org/downloads/).
+
+Prefer to do it by hand? `pip install -r requirements.txt`, then `python -m studio.server`.
 
 The first start downloads the speech model by itself (about 480 MB, once).
 
-Open http://127.0.0.1:8765. There is no sign-in: it opens straight into the dashboard. Go to **Settings, AI**, choose
+It opens at http://127.0.0.1:8765. There is no sign-in: it opens straight into the dashboard. Go to **Settings, AI**, choose
 your AI service, paste your key and press **Save and test** (see [Choose your AI](#choose-your-ai)).
 
 ## If YouTube blocks downloads

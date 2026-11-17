@@ -19,7 +19,9 @@ are there, and only then offer to delete the old folder. Never delete anything w
 
 ## Run and test
 
-- Run: `python -m studio.server` (settings from `.env`; see `.env.example`). Needs Python 3.10+ and `ffmpeg`.
+- Run: double-click `Start SMS` (Windows) or `Start SMS.command` (Mac), or `python3 start.py`: it updates, sets up
+  `.venv`, installs requirements and ffmpeg when needed, starts SMS and opens the browser (see `start.py`).
+- By hand: `python -m studio.server` (settings from `.env`; see `.env.example`). Needs Python 3.10+ and `ffmpeg`.
 - The speech model (about 480 MB) downloads by itself on first start; `python -m studio.fetch_model` gets it ahead of time.
 - Tests: `python tests/run.py`. It starts a throwaway copy on a spare port with an empty data folder. Run it
   before and after any change to `studio/`. No keys needed.
