@@ -59,7 +59,10 @@ def chat_server():
             if b"PONG :tmi.twitch.tv" in c.recv(1024): pong.set()
         except socket.timeout:
             pass
-        c.sendall(b"".join(msg(i) for i in range(40 if sec == 14 else 2)))
+        try:
+            c.sendall(b"".join(msg(i) for i in range(40 if sec == 14 else 2)))
+        except OSError:                      # the watcher hung up (the stream ended): done
+            break
         time.sleep(0.5)
     c.close()
 threading.Thread(target=chat_server, daemon=True).start()
@@ -114,6 +117,64 @@ if clips:
     srt = clips[0].with_suffix(".srt")
     check("an .srt is written next to the clip", srt.read_text(encoding="utf-8") if srt.exists() else "",
           "1\n00:00:00,000 --> 00:00:01,250\nHello chat\n\n2\n00:00:01,250 --> 00:00:03,000\nthat was crazy\n\n")
+
+# ---- YouTube: which link, and a whole run with YouTube chat (simulated: batches arrive late, with the real times)
+check("YouTube links and handles are recognised", [cw.stream(x)[:3] for x in (
+      "@SomeStreamer", "https://www.youtube.com/@SomeStreamer", "youtube.com/channel/UC123abc",
+      "https://www.youtube.com/watch?v=abc123XYZ", "https://youtu.be/abc123XYZ", "demo")],
+      [("youtube", "somestreamer", "https://www.youtube.com/@SomeStreamer/live"),
+       ("youtube", "somestreamer", "https://www.youtube.com/@SomeStreamer/live"),
+       ("youtube", "uc123abc", "https://youtube.com/channel/UC123abc/live"),
+       ("youtube", "abc123xyz", "https://www.youtube.com/watch?v=abc123XYZ"),
+       ("youtube", "abc123xyz", "https://youtu.be/abc123XYZ"),
+       ("twitch", "demo", "https://twitch.tv/demo")])
+try:
+    cw.stream("@x; rm"); check("odd handles are refused", False)
+except SystemExit:
+    check("odd handles are refused", True)
+
+(bin_ / "streamlink").write_text(f"""#!/bin/sh
+exec "{sys.executable}" - "$@" << 'PYEOF'
+import subprocess, sys
+out = sys.argv[sys.argv.index("--output") + 1]
+open(out + ".url", "w").write(sys.argv[-2])
+subprocess.run(["ffmpeg", "-loglevel", "error", "-re", "-f", "lavfi", "-i", "testsrc=size=1280x720:rate=30",
+                "-f", "lavfi", "-i", "sine=frequency=440", "-t", "32", "-c:v", "libx264", "-preset", "ultrafast",
+                "-c:a", "aac", "-f", "mpegts", out])
+PYEOF
+""")
+from studio import media, ytchat
+class FakeYDL:
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+    def extract_info(self, url, download=False): return {"is_live": True, "id": "LIVE123"}
+media.new_ydl = lambda opts: FakeYDL()
+seen_ids = []
+def fake_read(video_id, on_messages, stop, on_connected=None):
+    seen_ids.append(video_id)
+    on_connected and on_connected()
+    on_messages([int((time.time() - 300) * 1000)] * 50, backlog=True)          # old messages already on screen
+    t0 = time.time()
+    while not stop.wait(1):
+        now = time.time()
+        if 17 <= now - t0 < 18:                     # a burst written now (well past the warm-up), delivered 2 s later
+            burst_at = now
+            stop.wait(2)
+            on_messages([int(burst_at * 1000)] * 40)
+        on_messages([int((now - 0.5) * 1000)] * 2)  # the usual trickle
+ytchat.read = fake_read
+cw.YOUTUBE_GRACE = 3
+cw.YouTubeChat.grace = 3
+yt_out = tmp / "yt"
+code = cw.main(["@SomeStreamer", "--no-subs", "--out", str(yt_out)])
+check("a YouTube stream runs and ends cleanly", code, 0)
+recs = list((yt_out / "rec").glob("somestreamer-*.ts"))
+check("streamlink records the channel's live link", (yt_out / "rec" / (recs[0].name + ".url")).read_text() if recs else "",
+      "https://www.youtube.com/@SomeStreamer/live")
+check("the live video's chat is the one read", seen_ids[:1], ["LIVE123"])
+ytclips = sorted((yt_out / "clips").glob("somestreamer-*.mp4"))
+check("the burst makes one clip, though its batch came late; old messages don't count",
+      [int(c.name.split("-")[-1].replace("msgs.mp4", "")) for c in ytclips], lambda n: len(n) == 1 and 40 <= n[0] < 50)
 
 print("ALL PASSED" if not fails else f"{len(fails)} FAILED")
 sys.exit(1 if fails else 0)

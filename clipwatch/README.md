@@ -1,6 +1,7 @@
 # Clip watcher
 
-One command that records a Twitch stream, watches its chat, and clips the moments where chat suddenly gets busy.
+One command that records a Twitch or YouTube live stream, watches its chat, and clips the moments where chat
+suddenly gets busy.
 It runs on its own and doesn't need the SMS server.
 
 The same rule is built into the dashboard: a creator's **Setup → Clip on chat spikes** makes their live recordings
@@ -10,11 +11,18 @@ clip this way, with captions and posting.
 ./watch.sh <twitch_channel>
 ```
 
+```bash
+./watch.sh @youtube_handle
+```
+
+For YouTube, a channel link, a `/live` link or a video link of a stream that's live works too.
+
 ## What it does
 
 1. **Records** the live stream into `rec/` with streamlink.
-2. **Reads chat** anonymously over IRC (`irc.chat.twitch.tv:6667`, as `justinfan12345`). No Twitch account or
-   token needed.
+2. **Reads chat** anonymously. Twitch: over IRC (`irc.chat.twitch.tv:6667`, as `justinfan12345`). YouTube: the way
+   YouTube's own chat window does, the same code as the dashboard (`studio/ytchat.py`). No account, token or API
+   key needed. YouTube sends chat in batches, so each message is counted at the second it was written.
 3. **Finds spikes.** Counts chat messages in 10-second slices. A slice is a spike when it has at least **2.5 times**
    the usual number of messages (the middle value of the last 3 minutes) **and** at least `--min` messages.
    Nothing counts during the first minute, while it learns what "usual" is.

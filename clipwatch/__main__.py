@@ -1,10 +1,13 @@
-"""Clip watcher: records a Twitch stream, watches its chat, and clips the moments where chat suddenly gets busy.
+"""Clip watcher: records a Twitch or YouTube live stream, watches its chat, and clips the moments where chat suddenly
+gets busy.
 
     ./watch.sh <twitch_channel> [--min 10] [--model small]
+    ./watch.sh @youtube_handle            (or any YouTube channel or live link)
 
 What it does, step by step:
   1. streamlink records the live stream into rec/.
-  2. It reads the channel's chat anonymously (no account or token needed).
+  2. It reads the stream's chat anonymously (no account or token needed). YouTube chat is read the same way the
+     dashboard reads it (studio/ytchat.py).
   3. It counts chat messages in 10-second slices. A slice is a "spike" when it has at least 2.5 times the usual
      number of messages (the middle value of the last 3 minutes) and at least --min messages.
   4. For each spike, ffmpeg cuts 20 seconds before and 10 seconds after into clips/, cropped to a 9:16 vertical
@@ -34,6 +37,8 @@ BUCKET = 10          # seconds per chat slice
 BEFORE = 20          # seconds kept before the spike
 AFTER = 10           # seconds kept after the spike
 SETTLE = 5           # extra seconds to wait so the recording surely holds the end of the clip
+TWITCH_GRACE = 1     # a slice is judged this long after it ends, so late messages still count...
+YOUTUBE_GRACE = 8    # ...YouTube sends chat in batches every few seconds, so it gets longer
 
 IRC = os.environ.get("CLIPWATCH_IRC", "irc.chat.twitch.tv:6667")   # changed only by the tests
 NICK = "justinfan12345"                                              # Twitch's built-in anonymous, read-only login
@@ -44,6 +49,26 @@ _print_lock = threading.Lock()
 def say(msg: str) -> None:
     with _print_lock:
         print(f"{datetime.now():%H:%M:%S}  {msg}", flush=True)
+
+
+def stream(raw: str) -> tuple:
+    """(site, name for file names, link to record). A YouTube link or an @handle is YouTube; anything else is a
+    Twitch channel name or link."""
+    t = raw.strip()
+    if t.startswith("@") or re.match(r"^(https?://)?((www|m)\.)?(youtube\.com|youtu\.be)/", t, re.I):
+        if t.startswith("@"):
+            if not re.fullmatch(r"@[\w.\-]{3,30}", t):
+                raise SystemExit(f"'{raw}' doesn't look like a YouTube handle.")
+            url = f"https://www.youtube.com/{t}/live"
+        else:
+            url = t if t.lower().startswith("http") else "https://" + t
+            if re.match(r"^https?://(www\.|m\.)?youtube\.com/(@[^/?#]+|channel/[^/?#]+|c/[^/?#]+)/?$", url, re.I):
+                url = url.rstrip("/") + "/live"          # a channel: its live stream
+        m = re.search(r"(@[\w.\-]+|channel/[\w\-]+|[?&]v=[\w\-]+|youtu\.be/[\w\-]+|live/[\w\-]+)", url)
+        name = re.sub(r"[^\w\-]", "", (m.group(1) if m else "youtube").split("/")[-1].split("=")[-1]) or "youtube"
+        return "youtube", name.lower(), url
+    name = channel_name(t)
+    return "twitch", name, f"https://twitch.tv/{name}"
 
 
 def channel_name(raw: str) -> str:
@@ -59,11 +84,11 @@ def channel_name(raw: str) -> str:
 class Recorder:
     """Runs streamlink, which writes the stream into one growing .ts file."""
 
-    def __init__(self, channel: str, folder: Path, quality: str):
+    def __init__(self, name: str, url: str, folder: Path, quality: str):
         folder.mkdir(parents=True, exist_ok=True)
-        self.path = folder / f"{channel}-{datetime.now():%Y%m%d-%H%M%S}.ts"
+        self.path = folder / f"{name}-{datetime.now():%Y%m%d-%H%M%S}.ts"
         self.started_at: float | None = None      # the moment the first video arrived: second 0 of the file
-        cmd = ["streamlink", "--force", "--output", str(self.path), f"https://twitch.tv/{channel}", quality]
+        cmd = ["streamlink", "--force", "--output", str(self.path), url, quality]
         self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         self.log: list[str] = []
         threading.Thread(target=self._read_log, daemon=True).start()
@@ -97,25 +122,40 @@ class Recorder:
 
 # ---------------------------------------------------------------- 2. chat
 
-class Chat:
-    """Reads the channel's chat over IRC and counts the messages. Reconnects by itself if the connection drops."""
+class ChatCount:
+    """Messages per second of the clock, by when each was written. Shared by Twitch and YouTube chat."""
+    grace = TWITCH_GRACE
 
-    def __init__(self, channel: str):
-        self.channel = channel
-        self.count = 0
+    def __init__(self):
+        self.per_second: dict = {}
         self.lock = threading.Lock()
         self.stopping = threading.Event()
         self.connected = threading.Event()
-        threading.Thread(target=self._run, daemon=True).start()
 
-    def take(self) -> int:
-        """How many messages arrived since the last call."""
+    def add(self, when: float) -> None:
         with self.lock:
-            n, self.count = self.count, 0
+            k = int(when)
+            self.per_second[k] = self.per_second.get(k, 0) + 1
+
+    def count(self, start: float, end: float) -> int:
+        """Messages written in [start, end). Older seconds are forgotten, so a long stream doesn't fill memory."""
+        with self.lock:
+            n = sum(v for k, v in self.per_second.items() if start <= k < end)
+            for k in [k for k in self.per_second if k < start - 600]:
+                del self.per_second[k]
         return n
 
     def stop(self) -> None:
         self.stopping.set()
+
+
+class Chat(ChatCount):
+    """Reads a Twitch channel's chat over IRC. Reconnects by itself if the connection drops."""
+
+    def __init__(self, channel: str):
+        super().__init__()
+        self.channel = channel
+        threading.Thread(target=self._run, daemon=True).start()
 
     def _run(self) -> None:
         host, port = IRC.rsplit(":", 1)
@@ -157,8 +197,51 @@ class Chat:
                         self.connected.set()
                         say(f"Reading chat for #{self.channel}.")
                     elif f" PRIVMSG #{self.channel} " in line:
-                        with self.lock:
-                            self.count += 1
+                        self.add(time.time())
+
+
+class YouTubeChat(ChatCount):
+    """Reads a YouTube live stream's chat, the way the dashboard does (studio/ytchat.py): no account, no API key.
+    Each message carries the time it was written, so it is counted at that second, not when its batch arrived."""
+    grace = YOUTUBE_GRACE
+
+    def __init__(self, url: str):
+        super().__init__()
+        self.url = url
+        self.since = time.time()
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _messages(self, times, backlog=False) -> None:
+        for ms in times:
+            if ms / 1000 >= self.since:          # the backlog on screen when we joined is older: left out
+                self.add(ms / 1000)
+
+    def _run(self) -> None:
+        from studio import media, ytchat
+        wait = 5
+        while not self.stopping.is_set():
+            try:
+                with media.new_ydl({"quiet": True, "no_warnings": True, "skip_download": True, "noplaylist": True,
+                                    "logger": media._Quiet()}) as y:
+                    info = y.extract_info(self.url, download=False) or {}
+                if not info.get("is_live") or not info.get("id"):
+                    raise OSError("the stream isn't live")
+                ytchat.read(info["id"], self._messages, self.stopping, on_connected=self._joined)
+                return                              # the chat ended with the stream
+            except ytchat.NoChat as e:
+                say(f"No chat to read: {e} Clips can't be made from chat for this stream.")
+                return
+            except Exception as e:  # noqa: BLE001 - a dropped connection: try again
+                if self.stopping.is_set():
+                    return
+                self.connected.clear()
+                say(f"YouTube chat lost ({str(e)[-120:]}). Trying again in {wait} s.")
+                self.stopping.wait(wait)
+                wait = min(wait * 2, 60)
+
+    def _joined(self) -> None:
+        self.connected.set()
+        say("Reading YouTube chat.")
 
 
 # ---------------------------------------------------------------- 4. cutting
@@ -247,8 +330,8 @@ def _stamp(t: float) -> str:
 # ---------------------------------------------------------------- putting it together
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="watch.sh", description="Record a Twitch stream and clip the moments chat goes wild.")
-    ap.add_argument("channel", help="Twitch channel name or link")
+    ap = argparse.ArgumentParser(prog="watch.sh", description="Record a Twitch or YouTube live stream and clip the moments chat goes wild.")
+    ap.add_argument("channel", help="Twitch channel name or link, or a YouTube @handle, channel or live link")
     ap.add_argument("--min", type=int, default=10, help="fewest messages in 10 s that can count as a spike (default 10)")
     ap.add_argument("--ratio", type=float, default=2.5, help="how many times busier than usual a spike must be (default 2.5)")
     ap.add_argument("--quality", default="best", help="stream quality for streamlink (default best)")
@@ -258,7 +341,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", default=".", help="folder that gets rec/ and clips/ (default: here)")
     a = ap.parse_args(argv)
 
-    channel = channel_name(a.channel)
+    site, channel, url = stream(a.channel)
+    where = f"twitch.tv/{channel}" if site == "twitch" else url
     for tool in ("streamlink", "ffmpeg"):
         if not shutil.which(tool):
             print(f"{tool} isn't installed. See clipwatch/README.md.", file=sys.stderr)
@@ -267,14 +351,14 @@ def main(argv: list[str] | None = None) -> int:
     clips = out / "clips"
     clips.mkdir(parents=True, exist_ok=True)
 
-    say(f"Starting the recording of twitch.tv/{channel}...")
-    rec = Recorder(channel, out / "rec", a.quality)
-    chat = Chat(channel)
+    say(f"Starting the recording of {where}...")
+    rec = Recorder(channel, url, out / "rec", a.quality)
+    chat = Chat(channel) if site == "twitch" else YouTubeChat(url)
     if not rec.wait_for_video():
         rec.stop()
         chat.stop()
         detail = "\n".join(rec.log[-5:]) or "no video arrived"
-        print(f"Couldn't record twitch.tv/{channel}. Is the channel live?\n{detail}", file=sys.stderr)
+        print(f"Couldn't record {where}. Is it live?\n{detail}", file=sys.stderr)
         return 1
     say(f"Recording to {rec.path}")
 
@@ -296,15 +380,14 @@ def main(argv: list[str] | None = None) -> int:
                 if subs:
                     subs.add(path)
 
-    slice_start = time.time()
-    chat.take()                                  # start counting from now
+    slice_start = time.time()                    # counting starts now
     try:
         while rec.running():
             time.sleep(0.2)
             cut_ready()
-            if time.time() - slice_start < BUCKET:
+            if time.time() < slice_start + BUCKET + chat.grace:     # late messages still count
                 continue
-            n = chat.take()
+            n = chat.count(slice_start, slice_start + BUCKET)
             usual = finder.usual()
             if finder.add(n):
                 if slice_start - BEFORE < last_end:
