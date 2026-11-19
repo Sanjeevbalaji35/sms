@@ -44,13 +44,21 @@ with ctx.as_user(user):
                   "hashtags": ["gta"], "reason": "x"}], "model", 10)
     brain.ask_ai = fake_ai
     got = server.write_clip_text(job["id"], "clip001")
-    check("the AI writes the big text, title and description",
+    check("the AI writes the big text, title, description and hashtags",
           got, {"hook": "HE JUMPED THE CANYON", "title": "He actually jumped the whole canyon",
-                "description": "Nobody thought he'd make it."})
+                "description": "Nobody thought he'd make it.", "hashtags": ["gta"]})
     check("it reads only the words spoken in this clip", ("jumped the whole canyon" in sent[0],
           "before3" in sent[0], "after2" in sent[0]), (True, False, False))
     check("nothing is saved until Save is pressed", (clip["hook"], clip["title"]), ("", "Chat spike at 0:00:10"))
     check("one AI call per press", len(sent), 1)
+
+    from unittest.mock import patch
+    with patch.object(jobs._q, "put"):
+        jobs.request_render(job["id"], "clip001", {"hashtags": "#GTA6 #clips, funny  ##wow #no-way #a #b #c #d #e"})
+    check("Save keeps the hashtags, as plain words, at most 8", clip["hashtags"], ["GTA6", "clips", "funny", "wow", "noway", "a", "b", "c"])
+    with patch.object(jobs._q, "put"):
+        jobs.request_render(job["id"], "clip001", {"hashtags": ""})
+    check("and can clear them", clip["hashtags"], [])
 
     brain.ask_ai = lambda *a, **k: (_ for _ in ()).throw(RuntimeError('HTTP 503 {"message": "This model is currently experiencing high demand."}'))
     ai.provider, ai.models = (lambda: "gemini"), (lambda: ["gemini-2.5-flash"])

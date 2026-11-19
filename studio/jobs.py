@@ -4,6 +4,7 @@ import json
 import os
 import math
 import queue
+import re
 import shutil
 import threading
 import time
@@ -419,6 +420,10 @@ def request_render(jid, cid, changes: dict):
     for k in ("hook", "title", "description", "style", "layout"):
         if k in changes:
             new[k] = str(changes[k])[:{"hook": 60, "title": 100, "description": 2000}.get(k, 20)]
+    if "hashtags" in changes:      # "#gta #clip, funny" or a list: plain words, at most 8, like the AI's own
+        raw = changes["hashtags"]
+        raw = " ".join(map(str, raw)) if isinstance(raw, list) else str(raw)
+        new["hashtags"] = [t for t in (re.sub(r"\W", "", x)[:30] for x in re.split(r"[\s,#]+", raw)) if t][:8]
     if new.get("style") not in render.STYLES:
         new["style"] = DEFAULTS["style"]
     if new.get("layout") not in render.LAYOUTS:

@@ -969,7 +969,7 @@ def write_clip_text(jid: str, cid: str):
         got = brain.describe(text, job.get("title") or "", job.get("uploader") or "", strict=True)
     except Exception as e:  # noqa: BLE001 - say why, in plain words
         raise HTTPException(502, ai.explain(e) or "The AI didn't answer. Try again in a moment.")
-    return {k: got.get(k, "") for k in ("hook", "title", "description")}
+    return {**{k: got.get(k, "") for k in ("hook", "title", "description")}, "hashtags": got.get("hashtags") or []}
 
 
 @app.delete("/api/jobs/{jid}")
