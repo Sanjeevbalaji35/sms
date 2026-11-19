@@ -1,0 +1,14 @@
+# No domain yet: SMS on the server's own address, plain http (no padlock). Fine for trying it out.
+# With a domain, run ./deploy.sh again and give it the domain: HTTPS is then set up by itself.
+:80 {
+	encode zstd gzip
+	@upload path /api/upload /api/upload/*
+	request_body @upload {
+		max_size 2200MB
+	}
+	@small not path /api/upload /api/upload/*
+	request_body @small {
+		max_size 1MB
+	}
+	reverse_proxy app:8765
+}

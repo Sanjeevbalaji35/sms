@@ -61,6 +61,9 @@ get it from [python.org](https://www.python.org/downloads/).
 
 Prefer to do it by hand? `pip install -r requirements.txt`, then `python -m studio.server`.
 
+**On a server for others to use:** `sudo ./deploy.sh` sets it all up with one command (Docker, HTTPS, your admin
+account). See [DEPLOY.md](DEPLOY.md).
+
 The first start downloads the speech model by itself (about 480 MB, once).
 
 It opens at http://127.0.0.1:8765. There is no sign-in: it opens straight into the dashboard. Go to **Settings, AI**, choose

@@ -66,6 +66,7 @@ def main() -> int:
                 ("YouTube live chat: reading it, timing, chat spikes on YouTube", ["tests/test_ytchat.py"]),
                 ("the guard against YouTube's bot check, and the YouTube login", ["tests/test_youtube_guard.py"]),
                 ("the one-click launcher", ["tests/test_start.py"]),
+                ("one-command deploy: deploy.sh and create-admin", ["tests/test_deploy.py"]),
                 ("what to clip: mood, viewer reactions, on-screen action, no-AI modes", ["tests/test_signals.py"]),
                 ("the clip watcher: chat spikes, 9:16 cuts, subtitles", ["tests/test_clipwatch.py"])]
         for name, args in runs:

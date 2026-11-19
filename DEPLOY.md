@@ -10,6 +10,29 @@ SMS runs as three containers on one Linux server: the app, PostgreSQL, and Caddy
 - An AI key (see "Choose your AI" in the README). Optional: a Google "Web application" OAuth client, and an SMTP
   service for emails.
 
+## The easy way: one command
+
+On a fresh Linux server (Ubuntu or Debian):
+
+```bash
+git clone https://github.com/Sanjeevbalaji35/sms.git && cd sms
+```
+
+```bash
+sudo ./deploy.sh
+```
+
+It asks three things: the web address (a domain pointing at the server, or nothing to use the server's own address
+without HTTPS for now), your email and a password. Then it installs Docker if needed, writes `.env` (with a random
+database password), starts SMS with HTTPS, and makes you the admin. Open the address it prints and sign in.
+
+- **Update:** `sudo ./deploy.sh` again. Settings and data stay.
+- **Got a domain later:** point it at the server, then `sudo ./deploy.sh domain clips.example.com`.
+- **A server that already runs a website:** it notices ports 80/443 are taken and keeps SMS on `127.0.0.1:8765`
+  for your web server to forward to (see below).
+
+The steps below are what the script does, for doing it by hand.
+
 ## Steps
 
 1. Copy this folder to the server (or `git clone` it there).
@@ -20,6 +43,8 @@ SMS runs as three containers on one Linux server: the app, PostgreSQL, and Caddy
 4. Open `https://your-domain` and sign up. With Docker, accounts are on (`SMS_ACCOUNTS=1`), so everyone signs in.
    Every new account is a normal user.
 5. Make yourself an admin, on the server: `docker compose exec app python -m studio.admin grant you@example.com`
+   (or, before signing up, `docker compose exec app python -m studio.admin create-admin you@example.com` and type a
+   password: it makes the account too)
    The admin dashboard is then at `https://your-domain/admin`. It answers "not found" for everyone who is not an
    admin, and no page or web request can make someone an admin: only that command can.
 6. Sign in as that admin, open **Settings, AI**, and add your AI key there (or put it in `.env`).
@@ -69,7 +94,7 @@ Without SMTP on an HTTPS site, no reset emails can be sent.
 - **YouTube downloads from data centres** are sometimes refused by YouTube ("confirm you're not a bot"). If links
   fail on the server but work at home, the server's address is the cause. SMS then pauses YouTube links for a
   few minutes and says so; uploads and Twitch or Kick links keep working.
-- **Updates**: `git pull && docker compose up -d --build`. A restart pauses videos in progress (they pick up
+- **Updates**: `sudo ./deploy.sh` (or `git pull && docker compose up -d --build`). A restart pauses videos in progress (they pick up
   where they stopped) and live recordings (clips already found are finished from the saved stream).
 - **Open sign-up**: anyone who can reach the site can make an account and use your AI key. On a public address,
   keep the limits in `.env` sensible, or put the site behind your own access control.

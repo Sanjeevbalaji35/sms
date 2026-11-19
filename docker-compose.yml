@@ -27,7 +27,7 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql+psycopg://sms:${POSTGRES_PASSWORD}@db:5432/sms
-      SMS_PUBLIC_URL: https://${SMS_DOMAIN:?set SMS_DOMAIN in .env}
+      SMS_PUBLIC_URL: ${SMS_SCHEME:-https}://${SMS_DOMAIN:?set SMS_DOMAIN in .env}
       # On a server everyone signs in. Set SMS_ACCOUNTS=0 in .env only if the site is private to you.
       SMS_ACCOUNTS: ${SMS_ACCOUNTS:-1}
     volumes:

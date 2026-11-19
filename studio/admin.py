@@ -6,6 +6,7 @@ change it, and no email address is special in the code. It is set by hand, on th
     python -m studio.admin list
     python -m studio.admin grant someone@example.com
     python -m studio.admin revoke someone@example.com
+    python -m studio.admin create-admin you@example.com   (then type the password: makes the account if needed)
 
 Admins see accounts and AI use. They do not see anyone's videos, clips or connected accounts."""
 import shutil
@@ -152,12 +153,33 @@ def set_admin(email: str, on: bool) -> bool:
     return True
 
 
+def _exists(email: str) -> bool:
+    with db.engine.connect() as c:
+        return bool(c.execute(sa.select(db.users.c.id).where(db.users.c.email == email.strip().lower())).first())
+
+
 def _cli(argv):
     db.init()
     if argv[:1] == ["list"]:
         with db.engine.connect() as c:
             for r in c.execute(sa.select(db.users).order_by(db.users.c.created_at)):
                 print(f"{'admin' if r.is_admin else 'user ':5}  {'disabled' if r.disabled else '        '}  {r.email}")
+        return 0
+    if len(argv) == 2 and argv[0] == "create-admin":
+        # The password comes on standard input (never on the command line, where other users of the server could
+        # see it in the list of running programs). An account that already exists is just made an admin.
+        from . import auth
+        password = sys.stdin.readline().rstrip("\r\n")
+        email = argv[1].strip().lower()
+        if not _exists(email):
+            try:
+                u, _ = auth.signup(email, password, email.split("@")[0])
+            except auth.AuthError as e:
+                print(e)
+                return 1
+            auth.mark_verified(u.id)        # it's the owner's own address, typed on their own server
+        set_admin(email, True)
+        print(f"{email} is an admin. Sign in with it.")
         return 0
     if len(argv) == 2 and argv[0] in ("grant", "revoke"):
         if not set_admin(argv[1], argv[0] == "grant"):
