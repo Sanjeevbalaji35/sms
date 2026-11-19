@@ -21,7 +21,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 
 from . import admin as admins
 from . import account, load
-from . import (accounts, ai, alerts, auth, config, creators, ctx, db, jobs, live, media, posting,
+from . import (accounts, ai, alerts, auth, brain, config, creators, ctx, db, jobs, live, media, posting,
                profiles, render, safe, transcribe, usage)
 
 from . import tools as _tools  # noqa: E402
@@ -944,6 +944,32 @@ def rerender(jid: str, cid: str, body: dict = Body(...)):
     except (ValueError, TypeError) as e:
         raise HTTPException(400, str(e))
     return jobs.public(job)
+
+
+@app.post("/api/jobs/{jid}/clips/{cid}/write")
+def write_clip_text(jid: str, cid: str):
+    """The AI suggests the big text, title and description for one clip, from the words spoken in it. Only when the
+    person presses Write with AI; nothing is saved here: the editor fills its fields, and Save keeps them."""
+    job = _job_or_404(jid)
+    clip = next((c for c in job["clips"] if c["id"] == cid), None)
+    if not clip:
+        raise HTTPException(404, "No such clip")
+    if not config.ai_ready():
+        raise HTTPException(400, "Add your AI key first, in Settings, AI.")
+    _throttle("aiwrite:" + ctx.uid(), 30, 600, "That's a lot of AI writing in a short time. Wait a few minutes.")
+    try:
+        words = json.loads((Path(job["dir"]) / "words.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        words = []
+    text = " ".join(w["w"] for w in words if clip["start"] - 0.5 <= w.get("s", -1) <= clip["end"] + 0.5)
+    if len(text.split()) < 4:
+        raise HTTPException(400, "There's too little speech in this clip for the AI to write about. Type the big text yourself.")
+    usage.set_context(job.get("creator"), job.get("title") or job["source"].get("name"))
+    try:
+        got = brain.describe(text, job.get("title") or "", job.get("uploader") or "", strict=True)
+    except Exception as e:  # noqa: BLE001 - say why, in plain words
+        raise HTTPException(502, ai.explain(e) or "The AI didn't answer. Try again in a moment.")
+    return {k: got.get(k, "") for k in ("hook", "title", "description")}
 
 
 @app.delete("/api/jobs/{jid}")

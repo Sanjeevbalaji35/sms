@@ -218,6 +218,7 @@ img.avatar.ring{background:transparent}
 input:not([type=checkbox],[type=radio],[type=range]):focus-visible,select:focus-visible,textarea:focus-visible{outline:none}
 input::placeholder,textarea::placeholder{color:var(--faint)}
 label.f{display:flex;flex-direction:column;gap:7px;font-size:12px;color:var(--dim);font-weight:600}
+.f-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
 label.sw{display:flex;align-items:center;gap:12px;cursor:pointer;color:var(--text);font-weight:600}
 label.sw input{appearance:none;width:38px;height:22px;border-radius:999px;background:#DCD2D0;position:relative;cursor:pointer;flex:none;margin:0}
 label.sw input::after{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;transition:transform .15s}
@@ -2203,7 +2204,9 @@ function drawClipDlg(full) {
         <div class="job-head" style="margin:0"><div><span class="badge ${scoreCls(c.score)}" style="position:static">${c.judges ? "Words " + c.judges.words + (c.judges.reaction ? " · Reaction " + c.judges.reaction : "") : c.score ? "Score " + c.score : "Clipped by hand"}</span>
           <p class="sub" style="margin-top:8px">${esc(c.reason || "")}</p></div><button class="btn icon ghost" data-act="closedlg" aria-label="Close">${ic("x")}</button></div>
         <h3>On the video</h3>
-        <label class="f">Big text<input data-f="hook" value="${esc(c.hook)}"></label>
+        <div class="f-head"><span class="sub" style="font-size:12px;font-weight:600">Big text</span>
+          <button type="button" class="btn sm ghost" data-act="aiwrite" title="Uses your AI key, only when you press it">${ic("bolt")}Write with AI</button></div>
+        <label class="f" style="margin-top:-6px"><input data-f="hook" value="${esc(c.hook)}" aria-label="Big text" placeholder="A few words shown big on the video"></label>
         <label class="sw"><input type="checkbox" data-f="captions" data-caption-toggle ${c.captions === false ? "" : "checked"}>Generate captions</label>
         <div class="two"><label class="f">Caption style<select data-f="style" data-caption-style ${c.captions === false ? "disabled" : ""}>${opts(S.status.styles, c.style)}</select></label>
           <label class="f">Layout<select data-f="layout">${opts(S.status.layouts, c.layout)}</select></label></div>
@@ -2524,6 +2527,21 @@ document.addEventListener("click", async e => {
     if (a === "accremove") {
       if (!await ask("Disconnect this account?", "Posts still waiting for it will fail.", "Disconnect", true)) return;
       await api(`/api/accounts/${d.id}`, {method:"DELETE"}); await tick(); return drawSettings();
+    }
+    if (a === "aiwrite") {
+      b.disabled = true; const was = b.innerHTML; b.innerHTML = `${ic("bolt")}Writing…`;
+      try {
+        const got = await send(`/api/jobs/${D.jid}/clips/${D.cid}/write`, {});
+        const f = k => $(`#clipdlg [data-f="${k}"]`);
+        // The big text is always filled. The title and description only when empty or still the automatic text,
+        // so nothing you wrote yourself is replaced.
+        const auto = v => !v.trim() || /^(Chat spike at|Loud moment|Viewers reacted|Big moment)/.test(v);
+        if (got.hook) f("hook").value = got.hook;
+        if (got.title && auto(f("title").value)) f("title").value = got.title;
+        if (got.description && auto(f("description").value)) f("description").value = got.description;
+        toast("Written by AI. Check it, then press Save and re-make clip.", "ok");
+      } finally { b.disabled = false; b.innerHTML = was; }
+      return;
     }
     if (a === "remake") {
       const body = {}; $$("#clipdlg [data-f]").forEach(i => {

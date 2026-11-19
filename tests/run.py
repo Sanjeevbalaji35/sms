@@ -63,6 +63,7 @@ def main() -> int:
                 ("security: visitor address, email addresses, Google sign-in, prompts", ["tests/test_hardening.py"]),
                 ("long logs, the machine monitor, failed recordings, admin day totals", ["tests/test_robustness.py"]),
                 ("chat spikes mode in live recording", ["tests/test_chatclips.py"]),
+                ("Write with AI in the clip editor", ["tests/test_aiwrite.py"]),
                 ("YouTube live chat: reading it, timing, chat spikes on YouTube", ["tests/test_ytchat.py"]),
                 ("the guard against YouTube's bot check, and the YouTube login", ["tests/test_youtube_guard.py"]),
                 ("the one-click launcher", ["tests/test_start.py"]),

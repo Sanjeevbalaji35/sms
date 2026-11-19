@@ -361,7 +361,7 @@ def find_live_clips(words, z, now, chat=None, title="", uploader="", min_len=15,
     return clips, spent
 
 
-def describe(text, title="", uploader=""):
+def describe(text, title="", uploader="", strict=False):
     """Hook, title and post text for a clip the user cut by hand."""
     blank = {"score": 0, "category": "other", "hook": "", "title": "", "description": "", "hashtags": [],
              "highlight_words": [], "reason": "Clipped by hand."}
@@ -376,6 +376,8 @@ def describe(text, title="", uploader=""):
         c["reason"] = "Clipped by hand."
         return c
     except Exception:  # noqa: BLE001
+        if strict:               # asked for by a person pressing a button: they should hear why it failed
+            raise
         return blank
 
 
