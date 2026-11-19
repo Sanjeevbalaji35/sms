@@ -68,7 +68,8 @@ def resolve(url: str) -> dict:
     if "(live)" in title and info.get("description"):  # Twitch puts the real stream title here
         title = str(info["description"]).splitlines()[0][:120]
     return {"urls": [f["url"] for f in fmts], "title": title,
-            "uploader": info.get("uploader") or info.get("channel") or ""}
+            "uploader": info.get("uploader") or info.get("channel") or "",
+            "youtube_id": info.get("id") if media.is_youtube(url) and info.get("id") else ""}
 
 
 def active():
@@ -118,6 +119,10 @@ class Session:
         self.chat = collections.Counter()   # second -> messages
         self.chat_total = 0
         self.chat_on = False
+        self.chat_site = "twitch" if re.match(r"^https?://(?:www\.)?twitch\.tv/", job["source"]["url"]) else \
+            "youtube" if media.is_youtube(job["source"]["url"]) else ""
+        self.chat_problem = ""        # why chat can't be read, for the card (YouTube: chat turned off)
+        self.yt_chat_for = ""         # the YouTube video whose chat is being read
         self.last_check = 0.0
         self.words_at_check = 0
         self.checks = 0
@@ -189,6 +194,9 @@ class Session:
                 continue
             if not self.job.get("uploader"):
                 self.job.update(title=info["title"], uploader=info["uploader"])
+            if info.get("youtube_id") and info["youtube_id"] != self.yt_chat_for:
+                self.yt_chat_for = info["youtube_id"]
+                threading.Thread(target=ctx.bind(self._yt_chat), args=(info["youtube_id"],), daemon=True).start()
             self.part += 1
             with self.lock:
                 self.seg_clock = max(self.seg_clock, self.samples / SR)
@@ -245,7 +253,7 @@ class Session:
             while self.segments and self.segments[0][2] < keep_from:
                 self.segments.pop(0)[0].unlink(missing_ok=True)
 
-    # ---------------------------------------------------------------- chat (Twitch only)
+    # ---------------------------------------------------------------- chat (Twitch)
     def _chat(self, channel):
         while not self.stop_flag.is_set() and not self.ended:
             try:
@@ -275,6 +283,40 @@ class Session:
                 pass
             self.chat_on = False
             self.stop_flag.wait(5)
+
+    # ---------------------------------------------------------------- chat (YouTube)
+    def _yt_chat(self, video_id):
+        """Same counter as Twitch: messages per second of the stream. YouTube gives each message's exact time and
+        sends them in batches every few seconds, so each one is placed where it was written, not where it arrived."""
+        from . import ytchat
+        fails = 0
+        while not self.stop_flag.is_set() and not self.ended and self.yt_chat_for == video_id:
+            try:
+                ytchat.read(video_id, self._yt_messages, self.stop_flag, on_connected=lambda: setattr(self, "chat_on", True))
+                break                                  # the chat ended with the stream
+            except ytchat.NoChat as e:
+                self.chat_problem = str(e)
+                break
+            except Exception as e:  # noqa: BLE001 - a dropped connection: try again, but not for ever
+                fails += 1
+                if fails >= 6:
+                    self.chat_problem = f"YouTube chat couldn't be read ({media_safe(e)[:120]})."
+                    break
+            finally:
+                self.chat_on = False
+            self.stop_flag.wait(min(60, 5 * fails))
+
+    def _yt_messages(self, times, backlog=False):
+        now = time.time()
+        with self.lock:
+            here = self.samples / SR
+            for ms in times:
+                if ms / 1000 < self.started_at:        # written before this recording began (the backlog on screen)
+                    continue
+                sec = int(here - max(0.0, now - ms / 1000))
+                if sec >= 0:
+                    self.chat[sec] += 1
+                    self.chat_total += 1
 
     def _chat_spike(self, s, e):
         """True if chat was at least 3x busier than usual during (and just after) these seconds."""
@@ -306,7 +348,8 @@ class Session:
         f = self.chat_finder
         f.ratio = float(self.settings.get("chat_ratio") or 2.5)
         f.minimum = int(self.settings.get("chat_min") or 10)
-        while (self.chat_slice + 1) * self.CHAT_SLICE + 1 <= now:      # one second of grace for late messages
+        grace = 8 if self.chat_site == "youtube" else 1   # YouTube sends chat in batches every few seconds
+        while (self.chat_slice + 1) * self.CHAT_SLICE + grace <= now:      # late messages still count
             t = self.chat_slice * self.CHAT_SLICE
             self.chat_slice += 1
             if not self.chat_on:                  # no chat connection: an empty slice says nothing about chat
@@ -600,7 +643,7 @@ class Session:
 
     def _chat_card(self):
         f = self.chat_finder
-        return {"twitch": bool(re.match(r"^https?://(?:www\.)?twitch\.tv/", self.job["source"]["url"])),
+        return {"twitch": self.chat_site == "twitch", "chat_site": self.chat_site, "problem": self.chat_problem,
                 "connected": self.chat_on, "warming": not f or len(f.history) < f.warmup,
                 "usual": f.usual() if f else 0, "last": self.chat_last, "spikes": self.chat_hits,
                 "min": int(self.settings.get("chat_min") or 10), "ratio": float(self.settings.get("chat_ratio") or 2.5)}

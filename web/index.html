@@ -1731,13 +1731,16 @@ function everyPick(cid, v) {
     <div class="pick-menu" role="listbox">${EVERY.map(([k, l, h]) => `<button type="button" class="pick-opt" role="option" data-v="${k}" aria-selected="${k === cur[0]}"><span class="pl">${l}</span>${h ? `<small class="ph">${h}</small>` : ""}${ic("check").replace("<svg", '<svg class="tick"')}</button>`).join("")}</div></div>`;
 }
 function chatStats(R) {
-  const usual = !R.twitch ? "–" : R.warming ? "…" : (+R.usual).toFixed(R.usual % 1 ? 1 : 0);
-  return `<div class="stat"><b>${usual}</b><span>${!R.twitch ? "Chat spikes need Twitch" : R.warming ? "Learning how busy chat is" : "Usual messages per 10 s"}</span></div>
+  const site = R.chat_site ?? (R.twitch ? "twitch" : "");
+  const usual = !site || R.problem ? "–" : R.warming ? "…" : (+R.usual).toFixed(R.usual % 1 ? 1 : 0);
+  return `<div class="stat"><b>${usual}</b><span>${!site ? "Chat spikes need Twitch or YouTube" : R.problem ? "Chat can't be read" : R.warming ? "Learning how busy chat is" : "Usual messages per 10 s"}</span></div>
     <div class="stat"><b>${R.spikes || 0}</b><span>Chat spikes · no AI</span></div>`;
 }
 function chatMeter(R) {
   const rule = `A spike is ${R.min}+ messages in 10 s and ${R.ratio}× the usual.`;
-  const now = !R.twitch ? "This stream isn't on Twitch, so there's no chat to read. Only hand clips and trigger phrases will be made."
+  const site = R.chat_site ?? (R.twitch ? "twitch" : "");
+  const now = !site ? "This stream isn't on Twitch or YouTube, so there's no chat to read. Only hand clips and trigger phrases will be made."
+    : R.problem ? `${esc(R.problem)} Only hand clips and trigger phrases will be made.`
     : !R.connected ? "Connecting to chat…" : R.warming ? "Watching chat for a minute to learn what's usual."
     : `Last 10 s: <b>${R.last ?? 0}</b> messages.`;
   return `<div class="meter"><h4>Chat spikes</h4><div class="said" style="justify-content:flex-start;color:var(--text)"><div>${now}</div><div class="sub">${rule}</div></div></div>`;
@@ -1885,8 +1888,8 @@ function drawCreatorForm() {
         <label class="f">Find moments by<select data-k="pick_by">${opts(Object.fromEntries(Object.entries(PICKS).map(([k, v]) => [k, `${v[0]}: ${v[1]}`])), c.pick_by || "ai")}</select></label>
         <label class="sw span"><input type="checkbox" data-k="use_comments" ${c.use_comments === false ? "" : "checked"}><span>Read viewer comments and chat replay<small>Timestamps people write in YouTube comments ("3:42 lmao"), and Twitch chat replay, point at moments viewers loved.</small></span></label>
         <label class="sw span"><input type="checkbox" data-k="use_visual" ${c.use_visual ? "checked" : ""}><span>Watch what's on screen<small>Spots fast motion, cuts and flashes. Good for gaming with little talking. Slower: it looks through the whole picture.</small></span></label></div></div>
-    <div class="card"><h2>Clip on chat spikes</h2><p class="help">No AI at all, so no AI costs: a clip is made whenever Twitch chat suddenly gets busy. Chat is counted in 10-second slices. A slice is a spike when it has at least the number of messages below, and that many times the usual amount (the middle value of the last 3 minutes). Each clip is the 20 seconds before the spike and the 10 seconds after, named after the moment it happened. You can give it a hook and title yourself before posting.</p>
-      <div class="fields"><label class="sw span"><input type="checkbox" data-k="chat_clips" ${c.chat_clips ? "checked" : ""}><span>Clip when chat spikes, instead of asking the AI<small>${c.channels?.twitch ? "Hand clips and your trigger phrases still work. Applies straight away, also to a recording that's running." : "Twitch only: add their Twitch channel above. Chat is read from Twitch."}</small></span></label>
+    <div class="card"><h2>Clip on chat spikes</h2><p class="help">No AI at all, so no AI costs: a clip is made whenever Twitch or YouTube live chat suddenly gets busy. Chat is counted in 10-second slices. A slice is a spike when it has at least the number of messages below, and that many times the usual amount (the middle value of the last 3 minutes). Each clip is the 20 seconds before the spike and the 10 seconds after, named after the moment it happened. You can give it a hook and title yourself before posting.</p>
+      <div class="fields"><label class="sw span"><input type="checkbox" data-k="chat_clips" ${c.chat_clips ? "checked" : ""}><span>Clip when chat spikes, instead of asking the AI<small>${c.channels?.twitch || c.channels?.youtube ? "Works on Twitch and YouTube live streams. Hand clips and your trigger phrases still work. Applies straight away, also to a recording that's running." : "Needs a Twitch or YouTube channel: add one above. Kick chat isn't supported yet."}</small></span></label>
         <label class="f">Fewest messages in 10 seconds<input data-k="chat_min" type="number" min="1" max="1000" value="${c.chat_min ?? 10}"><small class="sub" style="font-weight:400">Raise it for big channels, so a few extra messages don't count.</small></label>
         <label class="f">Times busier than usual<input data-k="chat_ratio" type="number" min="1.2" max="10" step="0.1" value="${c.chat_ratio ?? 2.5}"></label></div></div>
     <div class="card"${c.chat_clips ? ' style="opacity:.55"' : ""}><h2>How the AI decides</h2><p class="help">${c.chat_clips ? "<b>Off while chat spikes are on.</b> " : ""}Two separate AI checks. The words judge reads only what was said. The reaction judge sees only how loud the streamer got and how busy chat was, never the words.</p>

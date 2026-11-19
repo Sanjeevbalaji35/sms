@@ -78,7 +78,7 @@ YouTube sometimes says SMS looks like a bot. Two things stop that:
 ## Clip watcher (one command)
 
 In the dashboard: open a creator, go to **Setup**, and turn on **Clip on chat spikes**. Their live recordings then
-clip whenever Twitch chat suddenly gets busy (2.5x the usual and at least 10 messages in 10 seconds, both
+clip whenever Twitch or YouTube live chat suddenly gets busy (2.5x the usual and at least 10 messages in 10 seconds, both
 adjustable), 20 seconds before the spike and 10 after, instead of asking the AI. Clips get captions and can be
 posted like any other.
 
