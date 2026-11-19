@@ -21,11 +21,38 @@ start.run = lambda cmd, **k: calls.append(cmd) or 0
 os.environ["SMS_LAUNCH_UPDATE"] = "0"
 start.update()
 check("SMS_LAUNCH_UPDATE=0 skips updating", calls, [])
-start.up = lambda url: True
-opened = []
+# ---- an SMS that's already running
+import http.server, socket, threading
+class Health(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200 if self.path == "/healthz" else 404); self.end_headers(); self.wfile.write(b"ok")
+    def log_message(self, *a): pass
+srv = http.server.HTTPServer(("127.0.0.1", 0), Health)
+threading.Thread(target=srv.serve_forever, daemon=True).start()
+port = srv.server_address[1]
+os.environ["SMS_PORT"] = str(port)
+check("the port is read without loading SMS", start.address(), f"http://127.0.0.1:{port}")
+os.environ["HTTP_PROXY"] = os.environ["http_proxy"] = "http://127.0.0.1:9"     # a proxy that goes nowhere
+check("the 'is SMS running?' check never goes through a proxy", start.up(start.address()), True)
+opened, ran = [], []
 start.webbrowser.open = lambda u: opened.append(u)
-start.address = lambda: "http://127.0.0.1:9999"
-check("already running: just opens the browser", (start.start(), opened), (0, ["http://127.0.0.1:9999/app"]))
+real_run = start.subprocess.run
+start.subprocess.run = lambda *a, **k: ran.append(a) or real_run(*a, **k)
+start.run = lambda cmd, **k: ran.append(cmd) or 0
+check("already running: it just opens the browser", (start.main(), opened), (0, [f"http://127.0.0.1:{port}/app"]))
+check("...before updating, installing or loading SMS (which would start a waiting folder move)", ran, [])
+start.subprocess.run = real_run
+
+# ---- the port taken by something that isn't answering as SMS
+sock = socket.socket(); sock.bind(("127.0.0.1", 0)); sock.listen(50)
+os.environ["SMS_PORT"] = str(sock.getsockname()[1])
+start.time.sleep = lambda s: None
+check("a taken port is noticed", start.taken(int(os.environ["SMS_PORT"])), True)
+try:
+    start.already_running(start.address()); check("and explained, instead of a crash later", False)
+except SystemExit:
+    check("and explained, instead of a crash later", True)
+os.environ.pop("SMS_PORT"); os.environ.pop("HTTP_PROXY"); os.environ.pop("http_proxy")
 check("the Mac file checks for Python 3.10 or newer", "sys.version_info < (3, 10)" in Path("Start SMS.command").read_text(), True)
 print("ALL PASSED" if not fails else f"{len(fails)} FAILED")
 sys.exit(1 if fails else 0)
