@@ -11,6 +11,7 @@ Only the time of each message is used, never its words: chat is untrusted text f
 from __future__ import annotations
 
 import json
+from collections import deque
 
 from . import media
 
@@ -46,6 +47,32 @@ def next_step(chat: dict):
     return None, 0.0
 
 
+def all_messages(chat: dict):
+    """The continuation for "Live chat" (every message) instead of the default "Top chat", which YouTube filters
+    and smooths so heavily on busy streams that chat never seems to spike. Same place yt-dlp looks."""
+    try:
+        items = chat["header"]["liveChatHeaderRenderer"]["viewSelector"]["sortFilterSubMenuRenderer"]["subMenuItems"]
+        return items[1]["continuation"]["reloadContinuationData"]["continuation"]
+    except (KeyError, IndexError, TypeError):
+        return None
+
+
+class Placer:
+    """Turns each message's time into how many seconds ago it was written, without trusting this computer's clock
+    to match YouTube's (a clock a minute off would put every spike a minute off). The newest message in a batch
+    is taken as just written, give or take the smallest delay seen lately; the others keep their spacing."""
+
+    def __init__(self):
+        self.lags = deque(maxlen=30)
+
+    def ages(self, times_ms, now: float) -> list:
+        if not times_ms:
+            return []
+        self.lags.append(now - max(times_ms) / 1000)
+        floor = min(self.lags)
+        return [max(0.0, now - ms / 1000 - floor) for ms in times_ms]
+
+
 def read(video_id: str, on_messages, stop, on_connected=None) -> None:
     """Follow a live stream's chat until it ends or `stop` (a threading.Event) is set. Calls on_messages(times) with
     each batch. The first batch is the backlog already on screen when reading starts: it's passed with backlog=True."""
@@ -67,9 +94,15 @@ def read(video_id: str, on_messages, stop, on_connected=None) -> None:
             raise NoChat("YouTube didn't give what's needed to read this chat.")
         visitor = try_get(context, lambda x: x["client"]["visitorData"], str)
 
-        first = ydl.urlopen(CHAT_PAGE.format(cont)).read().decode("utf-8", "replace")
-        chat = try_get(ie.extract_yt_initial_data(video_id, first, fatal=False) or {},
-                       lambda x: x["continuationContents"]["liveChatContinuation"], dict) or {}
+        def chat_page(c):
+            html = ydl.urlopen(CHAT_PAGE.format(c)).read().decode("utf-8", "replace")
+            return try_get(ie.extract_yt_initial_data(video_id, html, fatal=False) or {},
+                           lambda x: x["continuationContents"]["liveChatContinuation"], dict) or {}
+
+        chat = chat_page(cont)
+        unfiltered = all_messages(chat)
+        if unfiltered and unfiltered != cont:       # switch from "Top chat" to "Live chat": every message
+            chat = chat_page(unfiltered) or chat
         if on_connected:
             on_connected()
         on_messages(message_times(chat), backlog=True)

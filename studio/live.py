@@ -307,13 +307,16 @@ class Session:
             self.stop_flag.wait(min(60, 5 * fails))
 
     def _yt_messages(self, times, backlog=False):
-        now = time.time()
+        if backlog:                                # what was already on screen when reading began: older
+            return
+        from .ytchat import Placer
+        if not hasattr(self, "yt_placer"):
+            self.yt_placer = Placer()
+        ages = self.yt_placer.ages(times, time.time())     # not trusting this computer's clock to match YouTube's
         with self.lock:
             here = self.samples / SR
-            for ms in times:
-                if ms / 1000 < self.started_at:        # written before this recording began (the backlog on screen)
-                    continue
-                sec = int(here - max(0.0, now - ms / 1000))
+            for age in ages:
+                sec = int(here - age)
                 if sec >= 0:
                     self.chat[sec] += 1
                     self.chat_total += 1

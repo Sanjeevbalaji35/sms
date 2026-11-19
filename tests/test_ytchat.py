@@ -42,7 +42,13 @@ def html(initial):
 WATCH = html({"contents": {"twoColumnWatchNextResults": {"conversationBar": {"liveChatRenderer": {
     "continuations": [{"reloadContinuationData": {"continuation": "C0"}}]}}}}})
 now_ms = int(time.time() * 1000)
-FIRST = html(batch([text_msg(now_ms - 60000)], "C1"))          # the backlog already on screen
+top = batch([text_msg(now_ms - 60000)], "CT")                  # "Top chat": what YouTube shows first, filtered
+top["continuationContents"]["liveChatContinuation"]["header"] = {"liveChatHeaderRenderer": {"viewSelector": {
+    "sortFilterSubMenuRenderer": {"subMenuItems": [
+        {"title": "Top chat", "continuation": {"reloadContinuationData": {"continuation": "C0"}}},
+        {"title": "Live chat", "continuation": {"reloadContinuationData": {"continuation": "CL"}}}]}}}}
+FIRST = html(top)
+LIVE_FIRST = html(batch([text_msg(now_ms - 60000)], "C1"))      # "Live chat": every message; the backlog on screen
 API = [batch([text_msg(now_ms + 1), text_msg(now_ms + 2)], "C2"), batch([text_msg(now_ms + 3)])]
 asked = []
 
@@ -57,6 +63,8 @@ def fake_urlopen(self, req):
         return Resp(WATCH)
     if "/live_chat?continuation=C0" in url:
         return Resp(FIRST)
+    if "/live_chat?continuation=CL" in url:
+        return Resp(LIVE_FIRST)
     if "get_live_chat?key=KEY123" in url:
         return Resp(json.dumps(API.pop(0)).encode())
     raise AssertionError("unexpected " + url)
@@ -66,7 +74,9 @@ got, connected = [], []
 ytchat.read("vid1", lambda t, backlog=False: got.append((backlog, t)), threading.Event(), on_connected=lambda: connected.append(1))
 check("connects through the watch page and the chat page", [u for u, _ in asked[:2]],
       ["https://www.youtube.com/watch?v=vid1", "https://www.youtube.com/live_chat?continuation=C0"])
-posted = [json.loads(d) for u, d in asked[2:]]
+check("then switches from the filtered Top chat to Live chat (every message), as yt-dlp does", asked[2][0],
+      "https://www.youtube.com/live_chat?continuation=CL")
+posted = [json.loads(d) for u, d in asked[3:]]
 check("then follows the chat with each next continuation", [p["continuation"] for p in posted], ["C1", "C2"])
 check("asking as YouTube's own web client", posted[0]["context"]["client"]["clientName"], "WEB")
 check("every batch is handed over, the first marked as backlog", [(bl, len(t)) for bl, t in got], [(True, 1), (False, 2), (False, 1)])
@@ -95,10 +105,20 @@ s = live.Session(job, c)
 check("a YouTube stream knows its chat is on YouTube", (s.chat_site, s._chat_card()["chat_site"]), ("youtube", "youtube"))
 s.samples = 100 * live.SR
 t = time.time()
-s.started_at = t - 100                                          # the recording began 100 s ago
-s._yt_messages([int((t - 2.5) * 1000), int((t - 2.5) * 1000), int((t - 0.5) * 1000), int((s.started_at - 30) * 1000)])
-check("each message lands on the second it was written, not when the batch arrived", dict(s.chat), {97: 2, 99: 1})
-check("messages from before the recording began are left out", s.chat_total, 3)
+s._yt_messages([int((t - 300) * 1000)] * 5, backlog=True)
+check("the backlog on screen when reading began is left out", s.chat_total, 0)
+s._yt_messages([int((t - 2.4) * 1000), int((t - 2.4) * 1000), int((t - 0.4) * 1000)])
+check("each message keeps its place: written 2 s before the newest one", dict(s.chat), {98: 2, 100: 1})
+for skew in (-60, 75):                                          # this computer's clock a minute or more off
+    sk = live.Session(dict(job, id=f"skew{skew}"), c)
+    sk.samples = 100 * live.SR
+    sk._yt_messages([int((t + skew - 0.4) * 1000)])             # teach it the usual delay
+    sk.chat.clear()
+    sk._yt_messages([int((t + skew - 2.4) * 1000), int((t + skew - 2.4) * 1000), int((t + skew - 0.4) * 1000)])
+    got = dict(sk.chat)
+    newest = max(got) if got else -1
+    check(f"a clock {abs(skew)} s {'behind' if skew < 0 else 'ahead'} doesn't move the moments", got,
+          lambda g, n=newest: n in (99, 100) and g == {n - 2: 2, n: 1})
 
 # chat spikes on YouTube: same rule as Twitch, judged a little later because messages come in batches
 s2 = live.Session(dict(job, id="j2"), c)

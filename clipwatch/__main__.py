@@ -212,9 +212,14 @@ class YouTubeChat(ChatCount):
         threading.Thread(target=self._run, daemon=True).start()
 
     def _messages(self, times, backlog=False) -> None:
-        for ms in times:
-            if ms / 1000 >= self.since:          # the backlog on screen when we joined is older: left out
-                self.add(ms / 1000)
+        if backlog:                              # the backlog on screen when we joined is older: left out
+            return
+        from studio.ytchat import Placer
+        if not hasattr(self, "placer"):
+            self.placer = Placer()
+        now = time.time()
+        for age in self.placer.ages(times, now):     # not trusting this computer's clock to match YouTube's
+            self.add(now - age)
 
     def _run(self) -> None:
         from studio import media, ytchat
